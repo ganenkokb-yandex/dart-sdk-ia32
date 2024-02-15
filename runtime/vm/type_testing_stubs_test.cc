@@ -18,7 +18,7 @@
 #include "vm/unit_test.h"
 #include "vm/zone_text_buffer.h"
 
-#if !defined(TARGET_ARCH_IA32)
+#if !defined(TARGET_ARCH_IA32_UNDEFINED)
 
 namespace dart {
 
@@ -135,17 +135,6 @@ static void GenerateInvokeTTSStub(compiler::Assembler* assembler) {
       case TypeTestABI::kInstanceReg:
         // Skip the already handled instance register.
         continue;
-      case TypeTestABI::kDstTypeReg:
-        __ LoadFromOffset(TypeTestABI::kInstanceReg, FPREG, dst_type_offset);
-        break;
-      case TypeTestABI::kFunctionTypeArgumentsReg:
-        __ LoadFromOffset(TypeTestABI::kInstanceReg, FPREG,
-                          fun_type_args_offset);
-        break;
-      case TypeTestABI::kInstantiatorTypeArgumentsReg:
-        __ LoadFromOffset(TypeTestABI::kInstanceReg, FPREG,
-                          inst_type_args_offset);
-        break;
       default:
         FATAL("Unexpected register %s", RegisterNames::RegisterName(reg));
         break;
@@ -2735,4 +2724,4 @@ TEST_CASE(TTS_STC_Capped) {
 
 }  // namespace dart
 
-#endif  // !defined(TARGET_ARCH_IA32)
+#endif  // !defined(TARGET_ARCH_IA32_UNDEFINED)

@@ -58,7 +58,7 @@ class TypeTestingStubGenerator {
   CodePtr OptimizedCodeForType(const AbstractType& type);
 
  private:
-#if !defined(TARGET_ARCH_IA32)
+#if !defined(TARGET_ARCH_IA32_UNDEFINED)
 #if !defined(DART_PRECOMPILED_RUNTIME)
   CodePtr BuildCodeForType(const AbstractType& type);
   static void BuildOptimizedTypeTestStub(
@@ -125,7 +125,7 @@ class TypeTestingStubGenerator {
       compiler::Label* check_failed);
 
 #endif  // !defined(DART_PRECOMPILED_RUNTIME)
-#endif  // !defined(TARGET_ARCH_IA32)
+#endif  // !defined(TARGET_ARCH_IA32_UNDEFINED)
 
   TypeTestingStubNamer namer_;
   ObjectStore* object_store_;

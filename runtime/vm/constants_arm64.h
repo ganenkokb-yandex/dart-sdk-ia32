@@ -81,6 +81,8 @@ enum Register {
   LR = R30,  // Note: direct access to this constant is not allowed. See above.
 };
 
+using LikeABI = Register;
+
 enum VRegister {
   // v0 Volatile; Parameter/scratch register, result register.
   V0 = 0,

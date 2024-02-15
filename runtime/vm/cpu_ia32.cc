@@ -39,8 +39,6 @@ void HostCPUFeatures::Init() {
   CpuInfo::Init();
   hardware_ = CpuInfo::GetCpuModel();
   sse2_supported_ = CpuInfo::FieldContains(kCpuInfoFeatures, "sse2");
-  sse4_1_supported_ = CpuInfo::FieldContains(kCpuInfoFeatures, "sse4_1") ||
-                      CpuInfo::FieldContains(kCpuInfoFeatures, "sse4.1");
   popcnt_supported_ = CpuInfo::FieldContains(kCpuInfoFeatures, "popcnt");
   abm_supported_ = CpuInfo::FieldContains(kCpuInfoFeatures, "abm");
 #if defined(DEBUG)

@@ -10,6 +10,7 @@
 #include "vm/class_id.h"
 #include "vm/compiler/assembler/assembler.h"
 #include "vm/compiler/backend/locations.h"
+#include "vm/compiler/like_registers.h"
 #include "vm/cpu.h"
 #include "vm/instructions.h"
 #include "vm/tags.h"
@@ -30,6 +31,24 @@ class DirectCallRelocation : public AssemblerFixup {
   virtual bool IsPointerOffset() const { return false; }
 };
 
+Assembler::Assembler(ObjectPoolBuilder* object_pool_builder,
+                     intptr_t far_branch_level)
+    : AssemblerBase(object_pool_builder),
+      jit_cookie_(0),
+      code_(NewZoneHandle(ThreadState::Current()->zone())) {
+  // Far branching mode is only needed and implemented for ARM.
+  ASSERT(far_branch_level == 0);
+
+  generate_invoke_write_barrier_wrapper_ = [&](Register reg) {
+    call(Address(THR,
+                 target::Thread::write_barrier_wrappers_thread_offset(reg)));
+  };
+  generate_invoke_array_write_barrier_ = [&]() {
+    call(
+        Address(THR, target::Thread::array_write_barrier_entry_point_offset()));
+  };
+}
+
 int32_t Assembler::jit_cookie() {
   if (jit_cookie_ == 0) {
     jit_cookie_ = CreateJitCookie();
@@ -43,7 +62,8 @@ void Assembler::call(Register reg) {
   EmitRegisterOperand(2, reg);
 }
 
-void Assembler::call(const Address& address) {
+void Assembler::call(const Address& address_orig) {
+  auto address = UpdateAddress(address_orig, EDI);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0xFF);
   EmitOperand(2, address);
@@ -70,7 +90,9 @@ void Assembler::pushl(Register reg) {
   EmitUint8(0x50 + reg);
 }
 
-void Assembler::pushl(const Address& address) {
+void Assembler::pushl(const Address& address_orig) {
+  ScopedAddressReg address_reg;
+  auto address = UpdateAddress(address_orig, address_reg);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0xFF);
   EmitOperand(6, address);
@@ -92,7 +114,9 @@ void Assembler::popl(Register reg) {
   EmitUint8(0x58 + reg);
 }
 
-void Assembler::popl(const Address& address) {
+void Assembler::popl(const Address& address_orig) {
+  ScopedAddressReg address_reg;
+  auto address = UpdateAddress(address_orig, address_reg);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0x8F);
   EmitOperand(0, address);
@@ -127,19 +151,25 @@ void Assembler::movl(Register dst, Register src) {
   EmitRegisterOperand(src, dst);
 }
 
-void Assembler::movl(Register dst, const Address& src) {
+void Assembler::movl(Register dst, const Address& src_orig) {
+  ScopedAddressReg address_reg;
+  auto src = UpdateAddress(src_orig, address_reg, 1 << dst);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0x8B);
   EmitOperand(dst, src);
 }
 
-void Assembler::movl(const Address& dst, Register src) {
+void Assembler::movl(const Address& dst_orig, Register src) {
+  ScopedAddressReg address_reg;
+  auto dst = UpdateAddress(dst_orig, address_reg, 1 << src);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0x89);
   EmitOperand(src, dst);
 }
 
-void Assembler::movl(const Address& dst, const Immediate& imm) {
+void Assembler::movl(const Address& dst_orig, const Immediate& imm) {
+  ScopedAddressReg address_reg;
+  auto dst = UpdateAddress(dst_orig, address_reg);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0xC7);
   EmitOperand(0, dst);
@@ -153,7 +183,9 @@ void Assembler::movzxb(Register dst, ByteRegister src) {
   EmitRegisterOperand(dst, src);
 }
 
-void Assembler::movzxb(Register dst, const Address& src) {
+void Assembler::movzxb(Register dst, const Address& src_orig) {
+  ScopedAddressReg address_reg;
+  auto src = UpdateAddress(src_orig, address_reg, 1 << dst);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0x0F);
   EmitUint8(0xB6);
@@ -167,7 +199,9 @@ void Assembler::movsxb(Register dst, ByteRegister src) {
   EmitRegisterOperand(dst, src);
 }
 
-void Assembler::movsxb(Register dst, const Address& src) {
+void Assembler::movsxb(Register dst, const Address& src_orig) {
+  ScopedAddressReg address_reg;
+  auto src = UpdateAddress(src_orig, address_reg, 1 << dst);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0x0F);
   EmitUint8(0xBE);
@@ -181,19 +215,25 @@ void Assembler::movb(Register dst, const Address& src) {
   FATAL("Use movzxb or movsxb instead.");
 }
 
-void Assembler::movb(const Address& dst, Register src) {
+void Assembler::movb(const Address& dst_orig, Register src) {
+  ScopedAddressReg address_reg;
+  auto dst = UpdateAddress(dst_orig, address_reg, 1 << src);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0x88);
   EmitOperand(src, dst);
 }
 
-void Assembler::movb(const Address& dst, ByteRegister src) {
+void Assembler::movb(const Address& dst_orig, ByteRegister src) {
+  ScopedAddressReg address_reg;
+  auto dst = UpdateAddress(dst_orig, address_reg, 1 << src);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0x88);
   EmitOperand(src, dst);
 }
 
-void Assembler::movb(const Address& dst, const Immediate& imm) {
+void Assembler::movb(const Address& dst_orig, const Immediate& imm) {
+  ScopedAddressReg address_reg;
+  auto dst = UpdateAddress(dst_orig, address_reg);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0xC6);
   EmitOperand(EAX, dst);
@@ -208,7 +248,9 @@ void Assembler::movzxw(Register dst, Register src) {
   EmitRegisterOperand(dst, src);
 }
 
-void Assembler::movzxw(Register dst, const Address& src) {
+void Assembler::movzxw(Register dst, const Address& src_orig) {
+  ScopedAddressReg address_reg;
+  auto src = UpdateAddress(src_orig, address_reg, 1 << dst);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0x0F);
   EmitUint8(0xB7);
@@ -222,7 +264,9 @@ void Assembler::movsxw(Register dst, Register src) {
   EmitRegisterOperand(dst, src);
 }
 
-void Assembler::movsxw(Register dst, const Address& src) {
+void Assembler::movsxw(Register dst, const Address& src_orig) {
+  ScopedAddressReg address_reg;
+  auto src = UpdateAddress(src_orig, address_reg, 1 << dst);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0x0F);
   EmitUint8(0xBF);
@@ -236,14 +280,18 @@ void Assembler::movw(Register dst, const Address& src) {
   FATAL("Use movzxw or movsxw instead.");
 }
 
-void Assembler::movw(const Address& dst, Register src) {
+void Assembler::movw(const Address& dst_orig, Register src) {
+  ScopedAddressReg address_reg;
+  auto dst = UpdateAddress(dst_orig, address_reg, 1 << src);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitOperandSizeOverride();
   EmitUint8(0x89);
   EmitOperand(src, dst);
 }
 
-void Assembler::movw(const Address& dst, const Immediate& imm) {
+void Assembler::movw(const Address& dst_orig, const Immediate& imm) {
+  ScopedAddressReg address_reg;
+  auto dst = UpdateAddress(dst_orig, address_reg);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitOperandSizeOverride();
   EmitUint8(0xC7);
@@ -252,7 +300,9 @@ void Assembler::movw(const Address& dst, const Immediate& imm) {
   EmitUint8((imm.value() >> 8) & 0xFF);
 }
 
-void Assembler::leal(Register dst, const Address& src) {
+void Assembler::leal(Register dst, const Address& src_orig) {
+  ScopedAddressReg address_reg;
+  auto src = UpdateAddress(src_orig, address_reg, 1 << dst);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0x8D);
   EmitOperand(dst, src);
@@ -327,7 +377,9 @@ void Assembler::rep_movsd() {
   EmitUint8(0xA5);
 }
 
-void Assembler::movss(XmmRegister dst, const Address& src) {
+void Assembler::movss(XmmRegister dst, const Address& src_orig) {
+  ScopedAddressReg address_reg;
+  auto src = UpdateAddress(src_orig, address_reg);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0xF3);
   EmitUint8(0x0F);
@@ -335,7 +387,9 @@ void Assembler::movss(XmmRegister dst, const Address& src) {
   EmitOperand(dst, src);
 }
 
-void Assembler::movss(const Address& dst, XmmRegister src) {
+void Assembler::movss(const Address& dst_orig, XmmRegister src) {
+  ScopedAddressReg address_reg;
+  auto dst = UpdateAddress(dst_orig, address_reg);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0xF3);
   EmitUint8(0x0F);
@@ -367,7 +421,9 @@ void Assembler::movd(Register dst, XmmRegister src) {
   EmitOperand(src, Operand(dst));
 }
 
-void Assembler::movq(const Address& dst, XmmRegister src) {
+void Assembler::movq(const Address& dst_orig, XmmRegister src) {
+  ScopedAddressReg address_reg;
+  auto dst = UpdateAddress(dst_orig, address_reg);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0x66);
   EmitUint8(0x0F);
@@ -375,7 +431,9 @@ void Assembler::movq(const Address& dst, XmmRegister src) {
   EmitOperand(src, Operand(dst));
 }
 
-void Assembler::movq(XmmRegister dst, const Address& src) {
+void Assembler::movq(XmmRegister dst, const Address& src_orig) {
+  ScopedAddressReg address_reg;
+  auto src = UpdateAddress(src_orig, address_reg);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0xF3);
   EmitUint8(0x0F);
@@ -391,7 +449,9 @@ void Assembler::addss(XmmRegister dst, XmmRegister src) {
   EmitXmmRegisterOperand(dst, src);
 }
 
-void Assembler::addss(XmmRegister dst, const Address& src) {
+void Assembler::addss(XmmRegister dst, const Address& src_orig) {
+  ScopedAddressReg address_reg;
+  auto src = UpdateAddress(src_orig, address_reg);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0xF3);
   EmitUint8(0x0F);
@@ -407,7 +467,9 @@ void Assembler::subss(XmmRegister dst, XmmRegister src) {
   EmitXmmRegisterOperand(dst, src);
 }
 
-void Assembler::subss(XmmRegister dst, const Address& src) {
+void Assembler::subss(XmmRegister dst, const Address& src_orig) {
+  ScopedAddressReg address_reg;
+  auto src = UpdateAddress(src_orig, address_reg);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0xF3);
   EmitUint8(0x0F);
@@ -423,7 +485,9 @@ void Assembler::mulss(XmmRegister dst, XmmRegister src) {
   EmitXmmRegisterOperand(dst, src);
 }
 
-void Assembler::mulss(XmmRegister dst, const Address& src) {
+void Assembler::mulss(XmmRegister dst, const Address& src_orig) {
+  ScopedAddressReg address_reg;
+  auto src = UpdateAddress(src_orig, address_reg);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0xF3);
   EmitUint8(0x0F);
@@ -439,7 +503,9 @@ void Assembler::divss(XmmRegister dst, XmmRegister src) {
   EmitXmmRegisterOperand(dst, src);
 }
 
-void Assembler::divss(XmmRegister dst, const Address& src) {
+void Assembler::divss(XmmRegister dst, const Address& src_orig) {
+  ScopedAddressReg address_reg;
+  auto src = UpdateAddress(src_orig, address_reg);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0xF3);
   EmitUint8(0x0F);
@@ -447,19 +513,25 @@ void Assembler::divss(XmmRegister dst, const Address& src) {
   EmitOperand(dst, src);
 }
 
-void Assembler::flds(const Address& src) {
+void Assembler::flds(const Address& src_orig) {
+  ScopedAddressReg address_reg;
+  auto src = UpdateAddress(src_orig, address_reg);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0xD9);
   EmitOperand(0, src);
 }
 
-void Assembler::fstps(const Address& dst) {
+void Assembler::fstps(const Address& dst_orig) {
+  ScopedAddressReg address_reg;
+  auto dst = UpdateAddress(dst_orig, address_reg);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0xD9);
   EmitOperand(3, dst);
 }
 
-void Assembler::movsd(XmmRegister dst, const Address& src) {
+void Assembler::movsd(XmmRegister dst, const Address& src_orig) {
+  ScopedAddressReg address_reg;
+  auto src = UpdateAddress(src_orig, address_reg);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0xF2);
   EmitUint8(0x0F);
@@ -467,7 +539,9 @@ void Assembler::movsd(XmmRegister dst, const Address& src) {
   EmitOperand(dst, src);
 }
 
-void Assembler::movsd(const Address& dst, XmmRegister src) {
+void Assembler::movsd(const Address& dst_orig, XmmRegister src) {
+  ScopedAddressReg address_reg;
+  auto dst = UpdateAddress(dst_orig, address_reg);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0xF2);
   EmitUint8(0x0F);
@@ -490,14 +564,18 @@ void Assembler::movaps(XmmRegister dst, XmmRegister src) {
   EmitXmmRegisterOperand(dst, src);
 }
 
-void Assembler::movups(XmmRegister dst, const Address& src) {
+void Assembler::movups(XmmRegister dst, const Address& src_orig) {
+  ScopedAddressReg address_reg;
+  auto src = UpdateAddress(src_orig, address_reg);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0x0F);
   EmitUint8(0x10);
   EmitOperand(dst, src);
 }
 
-void Assembler::movups(const Address& dst, XmmRegister src) {
+void Assembler::movups(const Address& dst_orig, XmmRegister src) {
+  ScopedAddressReg address_reg;
+  auto dst = UpdateAddress(dst_orig, address_reg);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0x0F);
   EmitUint8(0x11);
@@ -512,7 +590,9 @@ void Assembler::addsd(XmmRegister dst, XmmRegister src) {
   EmitXmmRegisterOperand(dst, src);
 }
 
-void Assembler::addsd(XmmRegister dst, const Address& src) {
+void Assembler::addsd(XmmRegister dst, const Address& src_orig) {
+  ScopedAddressReg address_reg;
+  auto src = UpdateAddress(src_orig, address_reg);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0xF2);
   EmitUint8(0x0F);
@@ -585,7 +665,9 @@ void Assembler::andps(XmmRegister dst, XmmRegister src) {
   EmitXmmRegisterOperand(dst, src);
 }
 
-void Assembler::andps(XmmRegister dst, const Address& src) {
+void Assembler::andps(XmmRegister dst, const Address& src_orig) {
+  ScopedAddressReg address_reg;
+  auto src = UpdateAddress(src_orig, address_reg);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0x0F);
   EmitUint8(0x54);
@@ -599,6 +681,7 @@ void Assembler::orps(XmmRegister dst, XmmRegister src) {
   EmitXmmRegisterOperand(dst, src);
 }
 
+#if defined(USE_ORIG_IA32)
 void Assembler::notps(XmmRegister dst) {
   static const struct ALIGN16 {
     uint32_t a;
@@ -640,6 +723,7 @@ void Assembler::zerowps(XmmRegister dst) {
   } float_zerow_constant = {0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0x00000000};
   andps(dst, Address::Absolute(reinterpret_cast<uword>(&float_zerow_constant)));
 }
+#endif
 
 void Assembler::cmppseq(XmmRegister dst, XmmRegister src) {
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
@@ -780,6 +864,7 @@ void Assembler::addpd(XmmRegister dst, XmmRegister src) {
   EmitXmmRegisterOperand(dst, src);
 }
 
+#if defined(USE_ORIG_IA32)
 void Assembler::negatepd(XmmRegister dst) {
   static const struct ALIGN16 {
     uint64_t a;
@@ -788,6 +873,7 @@ void Assembler::negatepd(XmmRegister dst) {
   xorpd(dst,
         Address::Absolute(reinterpret_cast<uword>(&double_negate_constant)));
 }
+#endif
 
 void Assembler::subpd(XmmRegister dst, XmmRegister src) {
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
@@ -813,6 +899,7 @@ void Assembler::divpd(XmmRegister dst, XmmRegister src) {
   EmitXmmRegisterOperand(dst, src);
 }
 
+#if defined(USE_ORIG_IA32)
 void Assembler::abspd(XmmRegister dst) {
   static const struct ALIGN16 {
     uint64_t a;
@@ -821,6 +908,7 @@ void Assembler::abspd(XmmRegister dst) {
   andpd(dst,
         Address::Absolute(reinterpret_cast<uword>(&double_absolute_constant)));
 }
+#endif
 
 void Assembler::minpd(XmmRegister dst, XmmRegister src) {
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
@@ -879,7 +967,9 @@ void Assembler::subsd(XmmRegister dst, XmmRegister src) {
   EmitXmmRegisterOperand(dst, src);
 }
 
-void Assembler::subsd(XmmRegister dst, const Address& src) {
+void Assembler::subsd(XmmRegister dst, const Address& src_orig) {
+  ScopedAddressReg address_reg;
+  auto src = UpdateAddress(src_orig, address_reg);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0xF2);
   EmitUint8(0x0F);
@@ -895,7 +985,9 @@ void Assembler::mulsd(XmmRegister dst, XmmRegister src) {
   EmitXmmRegisterOperand(dst, src);
 }
 
-void Assembler::mulsd(XmmRegister dst, const Address& src) {
+void Assembler::mulsd(XmmRegister dst, const Address& src_orig) {
+  ScopedAddressReg address_reg;
+  auto src = UpdateAddress(src_orig, address_reg);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0xF2);
   EmitUint8(0x0F);
@@ -911,7 +1003,9 @@ void Assembler::divsd(XmmRegister dst, XmmRegister src) {
   EmitXmmRegisterOperand(dst, src);
 }
 
-void Assembler::divsd(XmmRegister dst, const Address& src) {
+void Assembler::divsd(XmmRegister dst, const Address& src_orig) {
+  ScopedAddressReg address_reg;
+  auto src = UpdateAddress(src_orig, address_reg);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0xF2);
   EmitUint8(0x0F);
@@ -1045,7 +1139,9 @@ void Assembler::sqrtss(XmmRegister dst, XmmRegister src) {
   EmitXmmRegisterOperand(dst, src);
 }
 
-void Assembler::xorpd(XmmRegister dst, const Address& src) {
+void Assembler::xorpd(XmmRegister dst, const Address& src_orig) {
+  ScopedAddressReg address_reg;
+  auto src = UpdateAddress(src_orig, address_reg);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0x66);
   EmitUint8(0x0F);
@@ -1069,7 +1165,9 @@ void Assembler::orpd(XmmRegister dst, XmmRegister src) {
   EmitXmmRegisterOperand(dst, src);
 }
 
-void Assembler::xorps(XmmRegister dst, const Address& src) {
+void Assembler::xorps(XmmRegister dst, const Address& src_orig) {
+  ScopedAddressReg address_reg;
+  auto src = UpdateAddress(src_orig, address_reg);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0x0F);
   EmitUint8(0x57);
@@ -1083,7 +1181,9 @@ void Assembler::xorps(XmmRegister dst, XmmRegister src) {
   EmitXmmRegisterOperand(dst, src);
 }
 
-void Assembler::andpd(XmmRegister dst, const Address& src) {
+void Assembler::andpd(XmmRegister dst, const Address& src_orig) {
+  ScopedAddressReg address_reg;
+  auto src = UpdateAddress(src_orig, address_reg);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0x66);
   EmitUint8(0x0F);
@@ -1151,49 +1251,65 @@ void Assembler::roundsd(XmmRegister dst, XmmRegister src, RoundingMode mode) {
   EmitUint8(static_cast<uint8_t>(mode) | 0x8);
 }
 
-void Assembler::fldl(const Address& src) {
+void Assembler::fldl(const Address& src_orig) {
+  ScopedAddressReg address_reg;
+  auto src = UpdateAddress(src_orig, address_reg);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0xDD);
   EmitOperand(0, src);
 }
 
-void Assembler::fstpl(const Address& dst) {
+void Assembler::fstpl(const Address& dst_orig) {
+  ScopedAddressReg address_reg;
+  auto dst = UpdateAddress(dst_orig, address_reg);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0xDD);
   EmitOperand(3, dst);
 }
 
-void Assembler::fnstcw(const Address& dst) {
+void Assembler::fnstcw(const Address& dst_orig) {
+  ScopedAddressReg address_reg;
+  auto dst = UpdateAddress(dst_orig, address_reg);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0xD9);
   EmitOperand(7, dst);
 }
 
-void Assembler::fldcw(const Address& src) {
+void Assembler::fldcw(const Address& src_orig) {
+  ScopedAddressReg address_reg;
+  auto src = UpdateAddress(src_orig, address_reg);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0xD9);
   EmitOperand(5, src);
 }
 
-void Assembler::fistpl(const Address& dst) {
+void Assembler::fistpl(const Address& dst_orig) {
+  ScopedAddressReg address_reg;
+  auto dst = UpdateAddress(dst_orig, address_reg);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0xDF);
   EmitOperand(7, dst);
 }
 
-void Assembler::fistps(const Address& dst) {
+void Assembler::fistps(const Address& dst_orig) {
+  ScopedAddressReg address_reg;
+  auto dst = UpdateAddress(dst_orig, address_reg);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0xDB);
   EmitOperand(3, dst);
 }
 
-void Assembler::fildl(const Address& src) {
+void Assembler::fildl(const Address& src_orig) {
+  ScopedAddressReg address_reg;
+  auto src = UpdateAddress(src_orig, address_reg);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0xDF);
   EmitOperand(5, src);
 }
 
-void Assembler::filds(const Address& src) {
+void Assembler::filds(const Address& src_orig) {
+  ScopedAddressReg address_reg;
+  auto src = UpdateAddress(src_orig, address_reg);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0xDB);
   EmitOperand(0, src);
@@ -1242,7 +1358,9 @@ void Assembler::xchgl(Register dst, Register src) {
   EmitRegisterOperand(dst, src);
 }
 
-void Assembler::cmpw(const Address& address, const Immediate& imm) {
+void Assembler::cmpw(const Address& address_orig, const Immediate& imm) {
+  ScopedAddressReg address_reg;
+  auto address = UpdateAddress(address_orig, address_reg);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitOperandSizeOverride();
   EmitUint8(0x81);
@@ -1251,7 +1369,9 @@ void Assembler::cmpw(const Address& address, const Immediate& imm) {
   EmitUint8((imm.value() >> 8) & 0xFF);
 }
 
-void Assembler::cmpb(const Address& address, const Immediate& imm) {
+void Assembler::cmpb(const Address& address_orig, const Immediate& imm) {
+  ScopedAddressReg address_reg;
+  auto address = UpdateAddress(address_orig, address_reg);
   ASSERT(imm.is_int8());
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0x80);
@@ -1289,20 +1409,26 @@ void Assembler::testl(Register reg, const Immediate& immediate) {
   }
 }
 
-void Assembler::testl(const Address& address, const Immediate& immediate) {
+void Assembler::testl(const Address& address_orig, const Immediate& immediate) {
+  ScopedAddressReg address_reg;
+  auto address = UpdateAddress(address_orig, address_reg);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0xF7);
   EmitOperand(0, address);
   EmitImmediate(immediate);
 }
 
-void Assembler::testl(const Address& address, Register reg) {
+void Assembler::testl(const Address& address_orig, Register reg) {
+  ScopedAddressReg address_reg;
+  auto address = UpdateAddress(address_orig, address_reg, 1 << reg);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0x85);
   EmitOperand(reg, address);
 }
 
-void Assembler::testb(const Address& address, const Immediate& imm) {
+void Assembler::testb(const Address& address_orig, const Immediate& imm) {
+  ScopedAddressReg address_reg;
+  auto address = UpdateAddress(address_orig, address_reg);
   ASSERT(imm.is_int8());
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0xF6);
@@ -1310,7 +1436,9 @@ void Assembler::testb(const Address& address, const Immediate& imm) {
   EmitUint8(imm.value() & 0xFF);
 }
 
-void Assembler::testb(const Address& address, ByteRegister reg) {
+void Assembler::testb(const Address& address_orig, ByteRegister reg) {
+  ScopedAddressReg address_reg;
+  auto address = UpdateAddress(address_orig, address_reg, 1 << reg);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0x84);
   EmitOperand(reg, address);
@@ -1334,7 +1462,9 @@ void Assembler::Alu(uint8_t modrm_opcode, Register dst, const Immediate& imm) {
 void Assembler::Alu(int bytes,
                     uint8_t opcode,
                     Register dst,
-                    const Address& src) {
+                    const Address& src_orig) {
+  ScopedAddressReg address_reg;
+  auto src = UpdateAddress(src_orig, address_reg, 1 << dst);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   if (bytes == 2) {
     EmitOperandSizeOverride();
@@ -1346,8 +1476,10 @@ void Assembler::Alu(int bytes,
 
 void Assembler::Alu(int bytes,
                     uint8_t opcode,
-                    const Address& dst,
+                    const Address& dst_orig,
                     Register src) {
+  ScopedAddressReg address_reg;
+  auto dst = UpdateAddress(dst_orig, address_reg, 1 << src);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   if (bytes == 2) {
     EmitOperandSizeOverride();
@@ -1358,8 +1490,10 @@ void Assembler::Alu(int bytes,
 }
 
 void Assembler::Alu(uint8_t modrm_opcode,
-                    const Address& dst,
+                    const Address& dst_orig,
                     const Immediate& imm) {
+  ScopedAddressReg address_reg;
+  auto dst = UpdateAddress(dst_orig, address_reg);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitComplex(modrm_opcode, dst, imm);
 }
@@ -1395,7 +1529,9 @@ void Assembler::imull(Register reg, const Immediate& imm) {
   EmitImmediate(imm);
 }
 
-void Assembler::imull(Register reg, const Address& address) {
+void Assembler::imull(Register reg, const Address& address_orig) {
+  ScopedAddressReg address_reg;
+  auto address = UpdateAddress(address_orig, address_reg, 1 << reg);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0x0F);
   EmitUint8(0xAF);
@@ -1408,7 +1544,9 @@ void Assembler::imull(Register reg) {
   EmitOperand(5, Operand(reg));
 }
 
-void Assembler::imull(const Address& address) {
+void Assembler::imull(const Address& address_orig) {
+  ScopedAddressReg address_reg;
+  auto address = UpdateAddress(address_orig, address_reg);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0xF7);
   EmitOperand(5, address);
@@ -1420,7 +1558,9 @@ void Assembler::mull(Register reg) {
   EmitOperand(4, Operand(reg));
 }
 
-void Assembler::mull(const Address& address) {
+void Assembler::mull(const Address& address_orig) {
+  ScopedAddressReg address_reg;
+  auto address = UpdateAddress(address_orig, address_reg);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0xF7);
   EmitOperand(4, address);
@@ -1431,7 +1571,9 @@ void Assembler::incl(Register reg) {
   EmitUint8(0x40 + reg);
 }
 
-void Assembler::incl(const Address& address) {
+void Assembler::incl(const Address& address_orig) {
+  ScopedAddressReg address_reg;
+  auto address = UpdateAddress(address_orig, address_reg);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0xFF);
   EmitOperand(0, address);
@@ -1442,7 +1584,9 @@ void Assembler::decl(Register reg) {
   EmitUint8(0x48 + reg);
 }
 
-void Assembler::decl(const Address& address) {
+void Assembler::decl(const Address& address_orig) {
+  ScopedAddressReg address_reg;
+  auto address = UpdateAddress(address_orig, address_reg);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0xFF);
   EmitOperand(1, address);
@@ -1456,7 +1600,9 @@ void Assembler::shll(Register operand, Register shifter) {
   EmitGenericShift(4, Operand(operand), shifter);
 }
 
-void Assembler::shll(const Address& operand, Register shifter) {
+void Assembler::shll(const Address& operand_orig, Register shifter) {
+  ScopedAddressReg address_reg;
+  auto operand = UpdateAddress(operand_orig, address_reg, 1 << shifter);
   EmitGenericShift(4, Operand(operand), shifter);
 }
 
@@ -1476,7 +1622,9 @@ void Assembler::sarl(Register operand, Register shifter) {
   EmitGenericShift(7, Operand(operand), shifter);
 }
 
-void Assembler::sarl(const Address& address, Register shifter) {
+void Assembler::sarl(const Address& address_orig, Register shifter) {
+  ScopedAddressReg address_reg;
+  auto address = UpdateAddress(address_orig, address_reg, 1 << shifter);
   EmitGenericShift(7, Operand(address), shifter);
 }
 
@@ -1497,7 +1645,12 @@ void Assembler::shldl(Register dst, Register src, const Immediate& imm) {
   EmitUint8(imm.value() & 0xFF);
 }
 
-void Assembler::shldl(const Address& operand, Register src, Register shifter) {
+void Assembler::shldl(const Address& operand_orig,
+                      Register src,
+                      Register shifter) {
+  ScopedAddressReg address_reg;
+  auto operand =
+      UpdateAddress(operand_orig, address_reg, (1 << shifter) | (1 << src));
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   ASSERT(shifter == ECX);
   EmitUint8(0x0F);
@@ -1522,7 +1675,9 @@ void Assembler::shrdl(Register dst, Register src, const Immediate& imm) {
   EmitUint8(imm.value() & 0xFF);
 }
 
-void Assembler::shrdl(const Address& dst, Register src, Register shifter) {
+void Assembler::shrdl(const Address& dst_orig, Register src, Register shifter) {
+  ScopedAddressReg address_reg;
+  auto dst = UpdateAddress(dst_orig, address_reg, (1 << shifter) | (1 << src));
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   ASSERT(shifter == ECX);
   EmitUint8(0x0F);
@@ -1728,7 +1883,8 @@ void Assembler::jmp(Register reg) {
   EmitRegisterOperand(4, reg);
 }
 
-void Assembler::jmp(const Address& address) {
+void Assembler::jmp(const Address& address_orig) {
+  auto address = UpdateAddress(address_orig, EDI);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0xFF);
   EmitOperand(4, address);
@@ -1769,7 +1925,9 @@ void Assembler::lock() {
   EmitUint8(0xF0);
 }
 
-void Assembler::cmpxchgl(const Address& address, Register reg) {
+void Assembler::cmpxchgl(const Address& address_orig, Register reg) {
+  ScopedAddressReg address_reg;
+  auto address = UpdateAddress(address_orig, address_reg, 1 << reg);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitUint8(0x0F);
   EmitUint8(0xB1);
@@ -1797,8 +1955,10 @@ void Assembler::CompareRegisters(Register a, Register b) {
 }
 
 void Assembler::LoadFromOffset(Register reg,
-                               const Address& address,
+                               const Address& address_orig,
                                OperandSize type) {
+  ScopedAddressReg address_reg;
+  auto address = UpdateAddress(address_orig, address_reg, 1 << reg);
   switch (type) {
     case kByte:
       return movsxb(reg, address);
@@ -1818,8 +1978,10 @@ void Assembler::LoadFromOffset(Register reg,
 }
 
 void Assembler::StoreToOffset(Register reg,
-                              const Address& address,
+                              const Address& address_orig,
                               OperandSize sz) {
+  ScopedAddressReg address_reg;
+  auto address = UpdateAddress(address_orig, address_reg, 1 << reg);
   switch (sz) {
     case kByte:
     case kUnsignedByte:
@@ -1836,6 +1998,7 @@ void Assembler::StoreToOffset(Register reg,
   }
 }
 
+#if defined(USE_ORIG_IA32)
 void Assembler::StoreToOffset(const Object& object, const Address& dst) {
   if (target::CanEmbedAsRawPointerInGeneratedCode(object)) {
     movl(dst, Immediate(target::ToRawPointer(object)));
@@ -1848,6 +2011,7 @@ void Assembler::StoreToOffset(const Object& object, const Address& dst) {
     buffer_.EmitObject(object);
   }
 }
+#endif
 
 void Assembler::ArithmeticShiftRightImmediate(Register reg, intptr_t shift) {
   sarl(reg, Immediate(shift));
@@ -2016,6 +2180,7 @@ void Assembler::LoadIsolateGroup(Register dst) {
   movl(dst, Address(THR, target::Thread::isolate_group_offset()));
 }
 
+#if defined(USE_ORIG_IA32)
 void Assembler::LoadObject(Register dst,
                            const Object& object,
                            bool movable_referent) {
@@ -2079,8 +2244,11 @@ void Assembler::CompareObject(Register reg, const Object& object) {
     }
   }
 }
+#endif
 
-void Assembler::LoadCompressedSmi(Register dest, const Address& slot) {
+void Assembler::LoadCompressedSmi(Register dest, const Address& slot_orig) {
+  ScopedAddressReg address_reg;
+  auto slot = UpdateAddress(slot_orig, address_reg);
   movl(dest, slot);
 #if defined(DEBUG)
   Label done;
@@ -2090,6 +2258,7 @@ void Assembler::LoadCompressedSmi(Register dest, const Address& slot) {
 #endif
 }
 
+#if defined(USE_ORIG_IA32)
 void Assembler::StoreIntoObject(Register object,
                                 const Address& dest,
                                 Register value,
@@ -2166,6 +2335,7 @@ void Assembler::StoreIntoObject(Register object,
   }
   Bind(&done);
 }
+#endif
 
 void Assembler::StoreIntoObjectNoBarrier(Register object,
                                          const Address& dest,
@@ -2195,6 +2365,7 @@ void Assembler::StoreIntoObjectNoBarrier(Register object,
 #endif  // defined(DEBUG)
 }
 
+#if defined(USE_ORIG_IA32)
 void Assembler::StoreIntoArray(Register object,
                                Register slot,
                                Register value,
@@ -2263,6 +2434,7 @@ void Assembler::StoreIntoObjectNoBarrier(Register object,
   }
   // No store buffer update.
 }
+#endif  // defined(USE_ORIG_IA32)
 
 void Assembler::StoreInternalPointer(Register object,
                                      const Address& dest,
@@ -2309,6 +2481,7 @@ void Assembler::LoadDImmediate(XmmRegister dst, double value) {
   addl(ESP, Immediate(2 * target::kWordSize));
 }
 
+#if defined(USE_ORIG_IA32)
 void Assembler::FloatNegate(XmmRegister f) {
   static const struct ALIGN16 {
     uint32_t a;
@@ -2334,6 +2507,7 @@ void Assembler::DoubleAbs(XmmRegister reg) {
   } double_abs_constant = {0x7FFFFFFFFFFFFFFFLL, 0x7FFFFFFFFFFFFFFFLL};
   andpd(reg, Address::Absolute(reinterpret_cast<uword>(&double_abs_constant)));
 }
+#endif
 
 void Assembler::EnterFrame(intptr_t frame_size) {
   if (prologue_offset_ == -1) {
@@ -2416,11 +2590,13 @@ void Assembler::MonomorphicCheckedEntryJIT() {
          target::Instructions::kPolymorphicEntryOffsetJIT);
 }
 
+#if defined(USE_ORIG_IA32)
 // EBX receiver, ECX guarded cid as Smi.
 // Preserve EDX (ARGS_DESC_REG), not required today, but maybe later.
 void Assembler::MonomorphicCheckedEntryAOT() {
   UNIMPLEMENTED();
 }
+#endif
 
 void Assembler::BranchOnMonomorphicCheckedEntryJIT(Label* label) {
   has_monomorphic_entry_ = true;
@@ -2453,7 +2629,12 @@ void Assembler::FinalizeHashForSize(intptr_t bit_size,
   // While any 32-bit hash value fits in X bits, where X > 32, the caller may
   // reasonably expect that the returned values fill the entire bit space.
   ASSERT(bit_size <= kBitsPerInt32);
-  ASSERT(scratch != kNoRegister);
+  std::unique_ptr<MemoryRegister> scratch_holder;
+  if (scratch == kNoRegister) {
+    MemoryRegisterProvider scoped(this, dst);
+    scratch_holder = std::make_unique<MemoryRegister>(scoped.RegTmp());
+    scratch = *scratch_holder;
+  }
   // hash += hash << 3;
   movl(scratch, dst);
   shll(scratch, Immediate(3));
@@ -2684,11 +2865,17 @@ LeafRuntimeScope::~LeafRuntimeScope() {
     for (intptr_t i = kNumberOfVolatileCpuRegisters - 1; i >= 0; i--) {
       __ popl(volatile_cpu_registers[i]);
     }
+  } else {
+    const intptr_t kPushedRegistersSize =
+        (target::frame_layout.dart_fixed_frame_size - 2) *
+        target::kWordSize;  // From EnterStubFrame (excluding PC / FP)
+    __ leal(ESP, Address(EBP, -kPushedRegistersSize));
   }
 
-  __ leave();
+  __ LeaveFrame();
 }
 
+#if defined(USE_ORIG_IA32)
 void Assembler::Call(const Code& target,
                      bool movable_target,
                      CodeEntryKind entry_kind) {
@@ -2714,6 +2901,7 @@ void Assembler::J(Condition condition, const Code& target) {
   const ExternalLabel label(target::Code::EntryPointOf(target));
   j(condition, &label);
 }
+#endif  // defined(USE_ORIG_IA32)
 
 void Assembler::Align(intptr_t alignment, intptr_t offset) {
   ASSERT(Utils::IsPowerOfTwo(alignment));
@@ -2759,12 +2947,11 @@ void Assembler::MoveMemoryToMemory(Address dst, Address src, Register tmp) {
 #ifndef PRODUCT
 void Assembler::MaybeTraceAllocation(intptr_t cid,
                                      Label* trace,
-                                     Register temp_reg,
+                                     dart::compiler::LikeABI temp_reg,
                                      JumpDistance distance) {
   ASSERT(cid > 0);
   Address state_address(kNoRegister, 0);
 
-  ASSERT(temp_reg != kNoRegister);
   LoadIsolateGroup(temp_reg);
   movl(temp_reg, Address(temp_reg, target::IsolateGroup::class_table_offset()));
   movl(temp_reg,
@@ -2784,7 +2971,7 @@ void Assembler::TryAllocateObject(intptr_t cid,
                                   Label* failure,
                                   JumpDistance distance,
                                   Register instance_reg,
-                                  Register temp_reg) {
+                                  Register /*temp_reg*/) {
   ASSERT(failure != nullptr);
   ASSERT(instance_size != 0);
   ASSERT(Utils::IsAligned(instance_size,
@@ -2794,7 +2981,7 @@ void Assembler::TryAllocateObject(intptr_t cid,
     // If this allocation is traced, program will jump to failure path
     // (i.e. the allocation stub) which will allocate the object and trace the
     // allocation call site.
-    NOT_IN_PRODUCT(MaybeTraceAllocation(cid, failure, temp_reg, distance));
+    NOT_IN_PRODUCT(MaybeTraceAllocation(cid, failure, distance));
     movl(instance_reg, Address(THR, target::Thread::top_offset()));
     addl(instance_reg, Immediate(instance_size));
     // instance_reg: potential next object start.
@@ -2820,15 +3007,14 @@ void Assembler::TryAllocateArray(intptr_t cid,
                                  JumpDistance distance,
                                  Register instance,
                                  Register end_address,
-                                 Register temp_reg) {
+                                 Register /*temp_reg*/) {
   ASSERT(failure != nullptr);
-  ASSERT(temp_reg != kNoRegister);
   if (FLAG_inline_alloc &&
       target::Heap::IsAllocatableInNewSpace(instance_size)) {
     // If this allocation is traced, program will jump to failure path
     // (i.e. the allocation stub) which will allocate the object and trace the
     // allocation call site.
-    NOT_IN_PRODUCT(MaybeTraceAllocation(cid, failure, temp_reg, distance));
+    NOT_IN_PRODUCT(MaybeTraceAllocation(cid, failure, distance));
     movl(instance, Address(THR, target::Thread::top_offset()));
     movl(end_address, instance);
 
@@ -2877,6 +3063,7 @@ void Assembler::CopyMemoryWords(Register src,
   Bind(&done);
 }
 
+#if defined(USE_ORIG_IA32)
 void Assembler::PushCodeObject() {
   DEBUG_ASSERT(IsNotTemporaryScopedHandle(code_));
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
@@ -2913,6 +3100,7 @@ void Assembler::EnterOsrFrame(intptr_t extra_size) {
     subl(ESP, Immediate(extra_size));
   }
 }
+#endif  // defined(USE_ORIG_IA32)
 
 void Assembler::EnterStubFrame() {
   EnterDartFrame(0);
@@ -2935,6 +3123,8 @@ void Assembler::LeaveCFrame() {
 }
 
 void Assembler::EmitOperand(int rm, const Operand& operand) {
+  RELEASE_ASSERT(operand.like_abi_base_ == LikeABI::kNoRegister);
+  RELEASE_ASSERT(operand.like_abi_index_ == LikeABI::kNoRegister);
   ASSERT(rm >= 0 && rm < 8);
   const intptr_t length = operand.length_;
   ASSERT(length > 0);
@@ -3059,6 +3249,7 @@ void Assembler::SmiUntagOrCheckClass(Register object,
   cmpl(scratch, Immediate(class_id));
 }
 
+#if defined(USE_ORIG_IA32)
 void Assembler::LoadClassIdMayBeSmi(Register result, Register object) {
   if (result == object) {
     Label smi, join;
@@ -3089,6 +3280,7 @@ void Assembler::LoadClassIdMayBeSmi(Register result, Register object) {
     LoadClassId(result, result);
   }
 }
+#endif
 
 void Assembler::LoadTaggedClassIdMayBeSmi(Register result, Register object) {
   if (result == object) {
@@ -3160,6 +3352,106 @@ Address Assembler::ElementAddressForRegIndex(bool is_external,
                         target::Instance::DataOffsetFor(cid) + extra_disp);
   }
 }
+
+bool Assembler::constant_pool_allowed() const {
+  return constant_pool_allowed_;
+}
+
+void Assembler::set_constant_pool_allowed(bool b) {
+  constant_pool_allowed_ = b;
+}
+
+void Assembler::StoreReleaseCompressed(Register src,
+                                       Register address,
+                                       int32_t offset) {
+  // On intel stores have store-release behavior (i.e. stores are not
+  // re-ordered with other stores).
+  OBJ(mov)(Address(address, offset), src);
+#if defined(TARGET_USES_THREAD_SANITIZER)
+  TsanStoreRelease(Address(address, offset));
+#endif
+}
+
+void Assembler::EmitOperandREX(int rm, const Operand& operand, uint8_t rex) {
+  rex |= (rm > 7 ? REX_R : REX_NONE) | REX_NONE;
+  if (rex != REX_NONE) EmitUint8(REX_PREFIX | rex);
+}
+
+void Assembler::AndImmediate(Register dst, const Immediate& imm) {
+  andl(dst, imm);
+}
+
+void Assembler::AddImmediate(const Address& address, const Immediate& imm) {
+  const int64_t value = imm.value();
+  if (value == 0) {
+    return;
+  }
+  if (value > 0) {
+    addl(address, imm);
+  } else {
+    SubImmediate(address, Immediate(-value));
+  }
+}
+
+void Assembler::SubImmediate(const Address& address, const Immediate& imm) {
+  const int64_t value = imm.value();
+  if (value == 0) {
+    return;
+  }
+  if (value > 0) {
+    subl(address, imm);
+  } else {
+    AddImmediate(address, Immediate(-value));
+  }
+}
+
+void Assembler::movb(ByteRegister dst, const Address& src_orig) {
+  ScopedAddressReg address_reg;
+  auto src = UpdateAddress(src_orig, address_reg, 1 << dst);
+  AssemblerBuffer::EnsureCapacity ensured(&buffer_);
+  EmitOperandREX(dst & ~0x10, src, dst >= 8 ? REX_PREFIX : REX_NONE);
+  EmitUint8(0x8A);
+  EmitOperand(dst & 7, src);
+}
+
+void Assembler::xchgl(const Address& address_orig, Register src) {
+  ScopedAddressReg address_reg;
+  auto address = UpdateAddress(address_orig, address_reg, 1 << src);
+  AssemblerBuffer::EnsureCapacity ensured(&buffer_);
+  EmitUint8(0x87);
+  EmitOperand(src, address);
+}
+
+void Assembler::testb(const Address& address_orig, Register reg) {
+  testb(address_orig, ByteRegisterOf(reg));
+}
+
+#define UNARY_XMM_WITH_CONSTANT(name, constant, op)                            \
+  void Assembler::name(XmmRegister dst) {                                      \
+    pushl(EAX);                                                                \
+    movl(EAX, Address(THR, target::Thread::constant##_address_offset()));      \
+    op(dst, Address(EAX, 0));                                                  \
+    popl(EAX);                                                                 \
+  }
+
+// { 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF };
+UNARY_XMM_WITH_CONSTANT(notps, float_not, xorps)
+// { 0x80000000, 0x80000000, 0x80000000, 0x80000000 }
+UNARY_XMM_WITH_CONSTANT(negateps, float_negate, xorps)
+// { 0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF }
+UNARY_XMM_WITH_CONSTANT(absps, float_absolute, andps)
+// { 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0x00000000 }
+UNARY_XMM_WITH_CONSTANT(zerowps, float_zerow, andps)
+// { 0x8000000000000000LL, 0x8000000000000000LL }
+UNARY_XMM_WITH_CONSTANT(negatepd, double_negate, xorpd)
+// { 0x7FFFFFFFFFFFFFFFLL, 0x7FFFFFFFFFFFFFFFLL }
+UNARY_XMM_WITH_CONSTANT(abspd, double_abs, andpd)
+// {0x8000000000000000LL, 0x8000000000000000LL}
+UNARY_XMM_WITH_CONSTANT(DoubleNegate, double_negate, xorpd)
+// {0x7FFFFFFFFFFFFFFFLL, 0x7FFFFFFFFFFFFFFFLL}
+UNARY_XMM_WITH_CONSTANT(DoubleAbs, double_abs, andpd)
+
+#undef UNARY_XMM_WITH_CONSTANT
 
 void Assembler::RangeCheck(Register value,
                            Register temp,

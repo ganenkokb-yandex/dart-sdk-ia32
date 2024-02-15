@@ -135,7 +135,7 @@ FlowGraphAllocator::FlowGraphAllocator(const FlowGraph& flow_graph,
 #if !defined(TARGET_ARCH_IA32)
     // Need to preserve CODE_REG to be able to store the PC marker
     // and load the pool pointer.
-    blocked_cpu_registers_[CODE_REG] = true;
+    // blocked_cpu_registers_[CODE_REG] = true;
 #endif
   }
 }

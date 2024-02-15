@@ -112,6 +112,8 @@ enum Register {
   PC = R15,
 };
 
+using LikeABI = Register;
+
 // Values for single-precision floating point registers.
 enum SRegister {
   kNoSRegister = -1,

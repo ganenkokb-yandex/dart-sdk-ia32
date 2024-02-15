@@ -5,51 +5,230 @@
 #include "vm/globals.h"  // Needed here to get TARGET_ARCH_IA32.
 #if defined(TARGET_ARCH_IA32)
 
-#include "platform/unaligned.h"
 #include "vm/code_patcher.h"
 #include "vm/cpu.h"
 #include "vm/dart_entry.h"
 #include "vm/instructions.h"
 #include "vm/object.h"
+#include "vm/object_store.h"
 #include "vm/raw_object.h"
+#include "vm/reverse_pc_lookup_cache.h"
 
 namespace dart {
+// clang-format off
+namespace {
+  const int32_t before_code_pc_skip = 0;
+  const int32_t after_code_pc_skip = 0;
 
-// The expected pattern of a Dart unoptimized call (static and instance):
-//  mov ECX, ic-data
-//  mov EDI, target-code-object
-//  call target_address (stub)
-//  <- return address
+  static int16_t call_pattern[] = {
+    // 8b be a0 05 00 00       mov    edi,DWORD PTR [esi+0x5a0]
+    // ff 57 07                call   DWORD PTR [edi+0x7]
+    0x8b, 0xbe, -1, -1, 0x00, 0x00,
+    0xff, 0x57, -1
+  };
+
+  const int32_t load_code_pc_offset_new = 0x18 + 2;
+  static int16_t load_code_disp8_new[] = {
+    /* 0x00: mov dword ptr [esi+5A0h],ecx */ 0x89, 0x8E, -1, -1, -1, -1,
+    /* 0x06: mov ecx,dword ptr [esi+610h] */ 0x8B, 0x8E, -1, -1, -1, -1,
+    /* 0x0c: mov dword ptr [esi+59Ch],eax */ 0x89, 0x86, -1, -1, -1, -1,
+    /* 0x12: mov eax,dword ptr [esi+60Ch] */ 0x8B, 0x86, -1, -1, -1, -1,
+    /* 0x18: mov ecx,dword ptr [eax+17h]  */ 0x8B, 0x48, -1,
+    /* 0x1b: mov dword ptr [esi+60Ch],eax */ 0x89, 0x86, -1, -1, -1, -1,
+    /* 0x21: mov eax,dword ptr [esi+59Ch] */ 0x8B, 0x86, -1, -1, -1, -1,
+    /* 0x27: mov dword ptr [esi+610h],ecx */ 0x89, 0x8E, -1, -1, -1, -1,
+    /* 0x2d: mov ecx,dword ptr [esi+5A0h] */ 0x8B, 0x8E, -1, -1, -1, -1,
+  };
+  static int16_t load_code_disp32_new[] = {
+    /* 0x00: mov dword ptr [esi+5A0h],ecx */ 0x89, 0x8E, -1, -1, -1, -1,
+    /* 0x06: mov ecx,dword ptr [esi+610h] */ 0x8B, 0x8E, -1, -1, -1, -1,
+    /* 0x0c: mov dword ptr [esi+59Ch],eax */ 0x89, 0x86, -1, -1, -1, -1,
+    /* 0x12: mov eax,dword ptr [esi+60Ch] */ 0x8B, 0x86, -1, -1, -1, -1,
+    /* 0x18: mov ecx,dword ptr [eax+0B3h] */ 0x8B, 0x88, -1, -1, -1, -1,
+    /* 0x1e: mov dword ptr [esi+60Ch],eax */ 0x89, 0x86, -1, -1, -1, -1,
+    /* 0x24: mov eax,dword ptr [esi+59Ch] */ 0x8B, 0x86, -1, -1, -1, -1,
+    /* 0x2a: mov dword ptr [esi+610h],ecx */ 0x89, 0x8E, -1, -1, -1, -1,
+    /* 0x30: mov ecx,dword ptr [esi+5A0h] */ 0x8B, 0x8E, -1, -1, -1, -1,
+  };
+
+  const int32_t load_code_pc_offset = 0x13 + 2;
+  static int16_t load_code_disp8[] = {
+    /* 0x00: push ecx                     */ 0x51,
+    /* 0x01: mov ecx,dword ptr [esi+610h] */ 0x8B, 0x8E, -1, -1, -1, -1,
+    /* 0x07: mov dword ptr [esi+5A0h],eax */ 0x89, 0x86, -1, -1, -1, -1,
+    /* 0x0d: mov eax,dword ptr [esi+60Ch] */ 0x8B, 0x86, -1, -1, -1, -1,
+    /* 0x13: mov ecx,dword ptr [eax+17h]  */ 0x8B, 0x48, -1,
+    /* 0x16: mov dword ptr [esi+60Ch],eax */ 0x89, 0x86, -1, -1, -1, -1,
+    /* 0x1c: mov eax,dword ptr [esi+5A0h] */ 0x8B, 0x86, -1, -1, -1, -1,
+    /* 0x22: mov dword ptr [esi+610h],ecx */ 0x89, 0x8E, -1, -1, -1, -1,
+    /* 0x28: pop ecx                      */ 0x59,
+  };
+  static int16_t load_code_disp32[] = {
+    /* 0x00: push ecx                     */ 0x51,
+    /* 0x01: mov ecx,dword ptr [esi+610h] */ 0x8B, 0x8E, -1, -1, -1, -1,
+    /* 0x07: mov dword ptr [esi+5A0h],eax */ 0x89, 0x86, -1, -1, -1, -1,
+    /* 0x0d: mov eax,dword ptr [esi+60Ch] */ 0x8B, 0x86, -1, -1, -1, -1,
+    /* 0x13: mov ecx,dword ptr [eax+8Fh]  */ 0x8B, 0x88, -1, -1, -1, -1,
+    /* 0x19: mov dword ptr [esi+60Ch],eax */ 0x89, 0x86, -1, -1, -1, -1,
+    /* 0x1f: mov eax,dword ptr [esi+5A0h] */ 0x8B, 0x86, -1, -1, -1, -1,
+    /* 0x25: mov dword ptr [esi+610h],ecx */ 0x89, 0x8E, -1, -1, -1, -1,
+    /* 0x2b: pop ecx                      */ 0x59,
+  };
+
+  const int32_t load_argument_pc_offset = 0x0c + 2;
+  static int16_t load_argument_disp8[] = {
+    /* 0x00: mov dword ptr [esi+5A0h],eax */ 0x89, 0x86, -1, -1, -1, -1,
+    /* 0x06: mov eax,dword ptr [esi+60Ch] */ 0x8B, 0x86, -1, -1, -1, -1,
+    /* 0x0c: mov ecx,dword ptr [eax+13h]  */ 0x8B, 0x48, -1,
+    /* 0x0f: mov dword ptr [esi+60Ch],eax */ 0x89, 0x86, -1, -1, -1, -1,
+    /* 0x15: mov eax,dword ptr [esi+5A0h] */ 0x8B, 0x86, -1, -1, -1, -1,
+    /* 0x1b: mov dword ptr [esi+608h],ecx */ 0x89, 0x8E, -1, -1, -1, -1,
+  };
+  static int16_t load_argument_disp32[] = {
+    /* 0x00: mov dword ptr [esi+5A0h],eax */ 0x89, 0x86, -1, -1, -1, -1,
+    /* 0x06: mov eax,dword ptr [esi+60Ch] */ 0x8B, 0x86, -1, -1, -1, -1,
+    /* 0x0c: mov ecx,dword ptr [eax+8Bh]  */ 0x8B, 0x88, -1, -1, -1, -1,
+    /* 0x12: mov dword ptr [esi+60Ch],eax */ 0x89, 0x86, -1, -1, -1, -1,
+    /* 0x18: mov eax,dword ptr [esi+5A0h] */ 0x8B, 0x86, -1, -1, -1, -1,
+    /* 0x1e: mov dword ptr [esi+608h],ecx */ 0x89, 0x8E, -1, -1, -1, -1,
+  };
+  static int16_t load_argument_disp8_new[] = {
+    /* 0x00: mov dword ptr [esi+5A0h],eax */ 0x89, 0x86, -1, -1, -1, -1,
+    /* 0x06: mov eax,dword ptr [esi+60Ch] */ 0x8B, 0x86, -1, -1, -1, -1,
+    /* 0x0c: mov ecx,dword ptr [eax+0Bh]  */ 0x8B, 0x48, -1,
+    /* 0x0f: mov dword ptr [esi+60Ch],eax */ 0x89, 0x86, -1, -1, -1, -1,
+    /* 0x15: mov eax,dword ptr [esi+5A0h] */ 0x8B, 0x86, -1, -1, -1, -1,
+    /* 0x1b: mov dword ptr [esi+5A0h],eax */ 0x89, 0x86, -1, -1, -1, -1,
+    /* 0x21: mov eax,dword ptr [esi+608h] */ 0x8B, 0x86, -1, -1, -1, -1,
+    /* 0x27: mov eax,ecx                  */ 0x89, 0xC8,
+    /* 0x29: mov dword ptr [esi+608h],eax */ 0x89, 0x86, -1, -1, -1, -1,
+    /* 0x2f: mov eax,dword ptr [esi+5A0h] */ 0x8B, 0x86, -1, -1, -1, -1,
+  };
+  static int16_t load_argument_disp32_new[] = {
+    /* 0x00: mov dword ptr [esi+5A0h],eax */ 0x89, 0x86, -1, -1, -1, -1,
+    /* 0x06: mov eax,dword ptr [esi+60Ch] */ 0x8B, 0x86, -1, -1, -1, -1,
+    /* 0x0c: mov ecx,dword ptr [eax+14Fh] */ 0x8B, 0x88, -1, -1, -1, -1,
+    /* 0x12: mov dword ptr [esi+60Ch],eax */ 0x89, 0x86, -1, -1, -1, -1,
+    /* 0x18: mov eax,dword ptr [esi+5A0h] */ 0x8B, 0x86, -1, -1, -1, -1,
+    /* 0x1e: mov dword ptr [esi+5A0h],eax */ 0x89, 0x86, -1, -1, -1, -1,
+    /* 0x24: mov eax,dword ptr [esi+608h] */ 0x8B, 0x86, -1, -1, -1, -1,
+    /* 0x2a: mov eax,ecx                  */ 0x89, 0xC8,
+    /* 0x2c: mov dword ptr [esi+608h],eax */ 0x89, 0x86, -1, -1, -1, -1,
+    /* 0x32: mov eax,dword ptr [esi+5A0h] */ 0x8B, 0x86, -1, -1, -1, -1,
+  };
+
+  const int32_t load_data_pc_offset = 0x0c + 2;
+  static int16_t load_data_disp32[] = {
+    /* 0x00: mov dword ptr [esi+5A0h],eax  */ 0x89, 0x86, -1, -1, -1, -1,
+    /* 0x06: mov eax,dword ptr [esi+60Ch]  */ 0x8B, 0x86, -1, -1, -1, -1,
+    /* 0x0c: mov ecx,dword ptr [eax+278Bh] */ 0x8B, 0x88, -1, -1, -1, -1,
+    /* 0x12: mov dword ptr [esi+60Ch],eax  */ 0x89, 0x86, -1, -1, -1, -1,
+    /* 0x18: mov eax,dword ptr [esi+5A0h]  */ 0x8B, 0x86, -1, -1, -1, -1,
+  };
+
+  const int32_t load_code_pc_offset_aot = 0x0c + 2;
+  static int16_t load_code_disp32_aot[] = {
+    /* 0x00: mov dword ptr [esi+5A0h],ecx  */ 0x89, 0x8E, -1, -1, -1, -1,
+    /* 0x06: mov ecx,dword ptr [esi+60Ch]  */ 0x8B, 0x8E, -1, -1, -1, -1,
+    /* 0x0c: mov edi,dword ptr [ecx+2787h] */ 0x8B, 0xB9, -1, -1, -1, -1,
+    /* 0x12: mov dword ptr [esi+60Ch],ecx  */ 0x89, 0x8E, -1, -1, -1, -1,
+    /* 0x18: mov ecx,dword ptr [esi+5A0h]  */ 0x8B, 0x8E, -1, -1, -1, -1,
+  };
+}
+// clang-format on
+
 class UnoptimizedCall : public ValueObject {
  public:
   UnoptimizedCall(uword return_address, const Code& code)
-      : code_(code), start_(return_address - kPatternSize) {
-    ASSERT(IsValid());
+      : object_pool_(ObjectPool::Handle(code.GetObjectPool())),
+        code_index_(-1),
+        argument_index_(-1) {
+    uword pc = return_address;
+
+    // callq [CODE_REG + entry_point_offset]
+    // static int16_t call_pattern[] = {
+    //     0x41, 0xff, 0x54, 0x24, -1,
+    // };
+    if (MatchesPattern(pc, call_pattern, ARRAY_SIZE(call_pattern))) {
+      pc -= ARRAY_SIZE(call_pattern);
+    } else {
+      FATAL("Failed to decode at %" Px, pc);
+    }
+
+    // movq CODE_REG, [PP + offset]
+    // static int16_t load_code_disp8[] = {
+    //     0x4d, 0x8b, 0x67, -1,  //
+    // };
+    // static int16_t load_code_disp32[] = {
+    //     0x4d, 0x8b, 0xa7, -1, -1, -1, -1,
+    // };
+    pc -= before_code_pc_skip;
+    if (MatchesPattern(pc, load_code_disp8, ARRAY_SIZE(load_code_disp8))) {
+      pc -= ARRAY_SIZE(load_code_disp8);
+      code_index_ = IndexFromPPLoadDisp8(pc + load_code_pc_offset);
+    } else if (MatchesPattern(pc, load_code_disp32,
+                              ARRAY_SIZE(load_code_disp32))) {
+      pc -= ARRAY_SIZE(load_code_disp32);
+      code_index_ = IndexFromPPLoadDisp32(pc + load_code_pc_offset);
+    } else if (MatchesPattern(pc, load_code_disp8_new,
+                              ARRAY_SIZE(load_code_disp8_new))) {
+      pc -= ARRAY_SIZE(load_code_disp8_new);
+      code_index_ = IndexFromPPLoadDisp8(pc + load_code_pc_offset_new);
+    } else if (MatchesPattern(pc, load_code_disp32_new,
+                              ARRAY_SIZE(load_code_disp32_new))) {
+      pc -= ARRAY_SIZE(load_code_disp32_new);
+      code_index_ = IndexFromPPLoadDisp32(pc + load_code_pc_offset_new);
+    } else {
+      FATAL("Failed to decode at %" Px, pc);
+    }
+    pc -= after_code_pc_skip;
+    ASSERT(Object::Handle(object_pool_.ObjectAt(code_index_)).IsCode());
+
+    // movq RBX, [PP + offset]
+    // static int16_t load_argument_disp8[] = {
+    //     0x49, 0x8b, 0x5f, -1,  //
+    // };
+    // static int16_t load_argument_disp32[] = {
+    //     0x49, 0x8b, 0x9f, -1, -1, -1, -1,
+    // };
+    if (MatchesPattern(pc, load_argument_disp8,
+                       ARRAY_SIZE(load_argument_disp8))) {
+      pc -= ARRAY_SIZE(load_argument_disp8);
+      argument_index_ = IndexFromPPLoadDisp8(pc + load_argument_pc_offset);
+    } else if (MatchesPattern(pc, load_argument_disp32,
+                              ARRAY_SIZE(load_argument_disp32))) {
+      pc -= ARRAY_SIZE(load_argument_disp32);
+      argument_index_ = IndexFromPPLoadDisp32(pc + load_argument_pc_offset);
+    } else if (MatchesPattern(pc, load_argument_disp8_new,
+                              ARRAY_SIZE(load_argument_disp8_new))) {
+      pc -= ARRAY_SIZE(load_argument_disp8_new);
+      argument_index_ = IndexFromPPLoadDisp8(pc + load_argument_pc_offset);
+    } else if (MatchesPattern(pc, load_argument_disp32_new,
+                              ARRAY_SIZE(load_argument_disp32_new))) {
+      pc -= ARRAY_SIZE(load_argument_disp32_new);
+      argument_index_ = IndexFromPPLoadDisp32(pc + load_argument_pc_offset);
+    } else {
+      FATAL("Failed to decode at %" Px, pc);
+    }
   }
 
-  ObjectPtr ic_data() const {
-    return LoadUnaligned(reinterpret_cast<ObjectPtr*>(start_ + 1));
+  intptr_t argument_index() const { return argument_index_; }
+
+  CodePtr target() const {
+    Code& code = Code::Handle();
+    code ^= object_pool_.ObjectAt(code_index_);
+    return code.ptr();
   }
 
-  static constexpr int kMovInstructionSize = 5;
-  static constexpr int kCallInstructionSize = 3;
-  static constexpr int kPatternSize =
-      2 * kMovInstructionSize + kCallInstructionSize;
-
- private:
-  bool IsValid() {
-    uint8_t* code_bytes = reinterpret_cast<uint8_t*>(start_);
-    return (code_bytes[0] == 0xB9) &&
-           (code_bytes[2 * kMovInstructionSize] == 0xFF);
+  void set_target(const Code& target) const {
+    object_pool_.SetObjectAt(code_index_, target);
+    // No need to flush the instruction cache, since the code is not modified.
   }
-
-  uword return_address() const { return start_ + kPatternSize; }
-
-  uword call_address() const { return start_ + 2 * kMovInstructionSize; }
 
  protected:
-  const Code& code_;
-  uword start_;
+  const ObjectPool& object_pool_;
+  intptr_t code_index_;
+  intptr_t argument_index_;
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(UnoptimizedCall);
@@ -61,23 +240,18 @@ class NativeCall : public UnoptimizedCall {
       : UnoptimizedCall(return_address, code) {}
 
   NativeFunction native_function() const {
-    return LoadUnaligned(reinterpret_cast<NativeFunction*>(start_ + 1));
+    return reinterpret_cast<NativeFunction>(
+        object_pool_.RawValueAt(argument_index()));
   }
 
   void set_native_function(NativeFunction func) const {
-    Thread::Current()->isolate_group()->RunWithStoppedMutators([&]() {
-      WritableInstructionsScope writable(start_ + 1, sizeof(func));
-      StoreUnaligned(reinterpret_cast<NativeFunction*>(start_ + 1), func);
-    });
+    object_pool_.SetRawValueAt(argument_index(), reinterpret_cast<uword>(func));
   }
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(NativeCall);
 };
 
-// b9xxxxxxxx  mov ecx,<data>
-// bfyyyyyyyy  mov edi,<target>
-// ff5707      call [edi+<monomorphic-entry-offset>]
 class InstanceCall : public UnoptimizedCall {
  public:
   InstanceCall(uword return_address, const Code& code)
@@ -92,24 +266,10 @@ class InstanceCall : public UnoptimizedCall {
 #endif  // DEBUG
   }
 
-  ObjectPtr data() const {
-    return LoadUnaligned(reinterpret_cast<ObjectPtr*>(start_ + 1));
-  }
+  ObjectPtr data() const { return object_pool_.ObjectAt(argument_index()); }
   void set_data(const Object& data) const {
-    // N.B. The pointer is embedded in the Instructions object, but visited
-    // through the Code object.
-    code_.StorePointerUnaligned(reinterpret_cast<ObjectPtr*>(start_ + 1),
-                                data.ptr(), Thread::Current());
-  }
-
-  CodePtr target() const {
-    return LoadUnaligned(reinterpret_cast<CodePtr*>(start_ + 6));
-  }
-  void set_target(const Code& target) const {
-    // N.B. The pointer is embedded in the Instructions object, but visited
-    // through the Code object.
-    code_.StorePointerUnaligned(reinterpret_cast<CodePtr*>(start_ + 6),
-                                target.ptr(), Thread::Current());
+    ASSERT(data.IsArray() || data.IsICData() || data.IsMegamorphicCache());
+    object_pool_.SetObjectAt(argument_index(), data);
   }
 
  private:
@@ -118,8 +278,8 @@ class InstanceCall : public UnoptimizedCall {
 
 class UnoptimizedStaticCall : public UnoptimizedCall {
  public:
-  UnoptimizedStaticCall(uword return_address, const Code& code)
-      : UnoptimizedCall(return_address, code) {
+  UnoptimizedStaticCall(uword return_address, const Code& caller_code)
+      : UnoptimizedCall(return_address, caller_code) {
 #if defined(DEBUG)
     ICData& test_ic_data = ICData::Handle();
     test_ic_data ^= ic_data();
@@ -127,78 +287,283 @@ class UnoptimizedStaticCall : public UnoptimizedCall {
 #endif  // DEBUG
   }
 
+  ObjectPtr ic_data() const { return object_pool_.ObjectAt(argument_index()); }
+
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(UnoptimizedStaticCall);
 };
 
-// The expected pattern of a dart static call:
-//  mov EDX, arguments_descriptor_array (optional in polymorphic calls)
-//  mov EDI, Immediate(code_object)
-//  call [EDI + entry_point_offset]
-//  <- return address
-class StaticCall : public ValueObject {
+// The expected pattern of a call where the target is loaded from
+// the object pool.
+class PoolPointerCall : public ValueObject {
  public:
-  StaticCall(uword return_address, const Code& code)
-      : code_(code),
-        start_(return_address - (kMovInstructionSize + kCallInstructionSize)) {
-    ASSERT(IsValid());
+  explicit PoolPointerCall(uword return_address, const Code& caller_code)
+      : object_pool_(ObjectPool::Handle(caller_code.GetObjectPool())),
+        code_index_(-1) {
+    uword pc = return_address;
+
+    // callq [CODE_REG + entry_point_offset]
+    // static int16_t call_pattern[] = {
+    //     0x41, 0xff, 0x54, 0x24, -1,
+    // };
+    if (MatchesPattern(pc, call_pattern, ARRAY_SIZE(call_pattern))) {
+      pc -= ARRAY_SIZE(call_pattern);
+    } else {
+      FATAL("Failed to decode at %" Px, pc);
+    }
+
+    // movq CODE_REG, [PP + offset]
+    // static int16_t load_code_disp8[] = {
+    //     0x4d, 0x8b, 0x67, -1,  //
+    // };
+    // static int16_t load_code_disp32[] = {
+    //     0x4d, 0x8b, 0xa7, -1, -1, -1, -1,
+    // };
+    pc -= before_code_pc_skip;
+    if (MatchesPattern(pc, load_code_disp8, ARRAY_SIZE(load_code_disp8))) {
+      pc -= ARRAY_SIZE(load_code_disp8);
+      code_index_ = IndexFromPPLoadDisp8(pc + load_code_pc_offset);
+    } else if (MatchesPattern(pc, load_code_disp32,
+                              ARRAY_SIZE(load_code_disp32))) {
+      pc -= ARRAY_SIZE(load_code_disp32);
+      code_index_ = IndexFromPPLoadDisp32(pc + load_code_pc_offset);
+    } else if (MatchesPattern(pc, load_code_disp8_new,
+                              ARRAY_SIZE(load_code_disp8_new))) {
+      pc -= ARRAY_SIZE(load_code_disp8_new);
+      code_index_ = IndexFromPPLoadDisp8(pc + load_code_pc_offset_new);
+    } else if (MatchesPattern(pc, load_code_disp32_new,
+                              ARRAY_SIZE(load_code_disp32_new))) {
+      pc -= ARRAY_SIZE(load_code_disp32_new);
+      code_index_ = IndexFromPPLoadDisp32(pc + load_code_pc_offset_new);
+    } else {
+      FATAL("Failed to decode at %" Px, pc);
+    }
+    pc -= after_code_pc_skip;
+    ASSERT(Object::Handle(object_pool_.ObjectAt(code_index_)).IsCode());
   }
 
-  bool IsValid() {
-    uint8_t* code_bytes = reinterpret_cast<uint8_t*>(start_);
-    return (code_bytes[0] == 0xBF) && (code_bytes[5] == 0xFF);
+  CodePtr Target() const {
+    Code& code = Code::Handle();
+    code ^= object_pool_.ObjectAt(code_index_);
+    return code.ptr();
   }
 
-  CodePtr target() const {
-    return LoadUnaligned(reinterpret_cast<CodePtr*>(start_ + 1));
+  void SetTarget(const Code& target) const {
+    object_pool_.SetObjectAt(code_index_, target);
+    // No need to flush the instruction cache, since the code is not modified.
   }
 
-  void set_target(const Code& target) const {
-    // N.B. The pointer is embedded in the Instructions object, but visited
-    // through the Code object.
-    code_.StorePointerUnaligned(reinterpret_cast<CodePtr*>(start_ + 1),
-                                target.ptr(), Thread::Current());
-  }
-
-  static constexpr int kMovInstructionSize = 5;
-  static constexpr int kCallInstructionSize = 3;
+ protected:
+  const ObjectPool& object_pool_;
+  intptr_t code_index_;
 
  private:
-  uword return_address() const {
-    return start_ + kMovInstructionSize + kCallInstructionSize;
+  DISALLOW_IMPLICIT_CONSTRUCTORS(PoolPointerCall);
+};
+
+// Instance call that can switch between a direct monomorphic call, an IC call,
+// and a megamorphic call.
+//   load guarded cid            load ICData             load MegamorphicCache
+//   load monomorphic target <-> load ICLookup stub  ->  load MMLookup stub
+//   call target.entry           call stub.entry         call stub.entry
+class SwitchableCallBase : public ValueObject {
+ public:
+  explicit SwitchableCallBase(const ObjectPool& object_pool)
+      : object_pool_(object_pool), target_index_(-1), data_index_(-1) {}
+
+  intptr_t data_index() const { return data_index_; }
+  intptr_t target_index() const { return target_index_; }
+
+  ObjectPtr data() const { return object_pool_.ObjectAt(data_index()); }
+
+  void SetData(const Object& data) const {
+    ASSERT(!Object::Handle(object_pool_.ObjectAt(data_index())).IsCode());
+    object_pool_.SetObjectAt(data_index(), data);
+    // No need to flush the instruction cache, since the code is not modified.
   }
 
-  uword call_address() const { return start_ + kMovInstructionSize; }
+ protected:
+  const ObjectPool& object_pool_;
+  intptr_t target_index_;
+  intptr_t data_index_;
 
-  const Code& code_;
-  uword start_;
+ private:
+  DISALLOW_IMPLICIT_CONSTRUCTORS(SwitchableCallBase);
+};
 
-  DISALLOW_IMPLICIT_CONSTRUCTORS(StaticCall);
+// See [SwitchableCallBase] for a switchable calls in general.
+//
+// The target slot is always a [Code] object: Either the code of the
+// monomorphic function or a stub code.
+class SwitchableCall : public SwitchableCallBase {
+ public:
+  SwitchableCall(uword return_address, const Code& caller_code)
+      : SwitchableCallBase(ObjectPool::Handle(caller_code.GetObjectPool())) {
+    ASSERT(caller_code.ContainsInstructionAt(return_address));
+    uword pc = return_address;
+
+    // callq RCX
+    static int16_t call_pattern[] = {
+        0xff, 0xd1,  //
+    };
+    if (MatchesPattern(pc, call_pattern, ARRAY_SIZE(call_pattern))) {
+      pc -= ARRAY_SIZE(call_pattern);
+    } else {
+      FATAL("Failed to decode at %" Px, pc);
+    }
+
+    // movq RBX, [PP + offset]
+    // static int16_t load_data_disp8[] = {
+    //     0x49, 0x8b, 0x5f, -1,  //
+    // };
+    // static int16_t load_data_disp32[] = {
+    //     0x49, 0x8b, 0x9f, -1, -1, -1, -1,
+    // };
+    /* if (MatchesPattern(pc, load_data_disp8, ARRAY_SIZE(load_data_disp8))) {
+      pc -= ARRAY_SIZE(load_data_disp8);
+      data_index_ = IndexFromPPLoadDisp8(pc + load_data_pc_offset);
+    } else */ if (MatchesPattern(pc, load_data_disp32,
+                                 ARRAY_SIZE(load_data_disp32))) {
+      pc -= ARRAY_SIZE(load_data_disp32);
+      data_index_ = IndexFromPPLoadDisp32(pc + load_data_pc_offset);
+    } else {
+      FATAL("Failed to decode at %" Px, pc);
+    }
+    ASSERT(!Object::Handle(object_pool_.ObjectAt(data_index_)).IsCode());
+
+    // movq rcx, [CODE_REG + entrypoint_offset]
+    static int16_t load_entry_pattern[] = {
+        0x49, 0x8b, 0x4c, 0x24, -1,
+    };
+    if (MatchesPattern(pc, load_entry_pattern,
+                       ARRAY_SIZE(load_entry_pattern))) {
+      pc -= ARRAY_SIZE(load_entry_pattern);
+    } else {
+      FATAL("Failed to decode at %" Px, pc);
+    }
+
+    // movq CODE_REG, [PP + offset]
+    // static int16_t load_code_disp8[] = {
+    //     0x4d, 0x8b, 0x67, -1,  //
+    // };
+    // static int16_t load_code_disp32[] = {
+    //     0x4d, 0x8b, 0xa7, -1, -1, -1, -1,
+    // };
+    if (MatchesPattern(pc, load_code_disp8, ARRAY_SIZE(load_code_disp8))) {
+      pc -= ARRAY_SIZE(load_code_disp8);
+      target_index_ = IndexFromPPLoadDisp8(pc + load_code_pc_offset);
+    } else if (MatchesPattern(pc, load_code_disp32,
+                              ARRAY_SIZE(load_code_disp32))) {
+      pc -= ARRAY_SIZE(load_code_disp32);
+      target_index_ = IndexFromPPLoadDisp32(pc + load_code_pc_offset);
+    } else {
+      FATAL("Failed to decode at %" Px, pc);
+    }
+    ASSERT(Object::Handle(object_pool_.ObjectAt(target_index_)).IsCode());
+  }
+
+  void SetTarget(const Code& target) const {
+    ASSERT(Object::Handle(object_pool_.ObjectAt(target_index())).IsCode());
+    object_pool_.SetObjectAt(target_index(), target);
+    // No need to flush the instruction cache, since the code is not modified.
+  }
+
+  uword target_entry() const {
+    return Code::Handle(Code::RawCast(object_pool_.ObjectAt(target_index())))
+        .MonomorphicEntryPoint();
+  }
+};
+
+// See [SwitchableCallBase] for a switchable calls in general.
+//
+// The target slot is always a direct entrypoint address: Either the entry point
+// of the monomorphic function or a stub entry point.
+class BareSwitchableCall : public SwitchableCallBase {
+ public:
+  explicit BareSwitchableCall(uword return_address)
+      : SwitchableCallBase(ObjectPool::Handle(
+            IsolateGroup::Current()->object_store()->global_object_pool())) {
+    uword pc = return_address;
+
+    // callq RCX
+    static int16_t call_pattern[] = {
+        0xff, -1,  //
+    };
+    if (MatchesPattern(pc, call_pattern, ARRAY_SIZE(call_pattern))) {
+      pc -= ARRAY_SIZE(call_pattern);
+    } else {
+      FATAL("Failed to decode at %" Px, pc);
+    }
+
+    // movq RBX, [PP + offset]
+    // static int16_t load_data_disp8[] = {
+    //     0x49, 0x8b, 0x5f, -1,  //
+    // };
+    // static int16_t load_data_disp32[] = {
+    //     0x49, 0x8b, 0x9f, -1, -1, -1, -1,
+    // };
+    /* if (MatchesPattern(pc, load_data_disp8, ARRAY_SIZE(load_data_disp8))) {
+      pc -= ARRAY_SIZE(load_data_disp8);
+      data_index_ = IndexFromPPLoadDisp8(pc + load_data_pc_offset);
+    } else */ if (MatchesPattern(pc, load_data_disp32,
+                                 ARRAY_SIZE(load_data_disp32))) {
+      pc -= ARRAY_SIZE(load_data_disp32);
+      data_index_ = IndexFromPPLoadDisp32(pc + load_data_pc_offset);
+    } else {
+      FATAL("Failed to decode at %" Px, pc);
+    }
+    ASSERT(!Object::Handle(object_pool_.ObjectAt(data_index_)).IsCode());
+
+    // movq RCX, [PP + offset]
+    // static int16_t load_code_disp8[] = {
+    //     0x49, 0x8b, 0x4f, -1,  //
+    // };
+    // static int16_t load_code_disp32[] = {
+    //     0x49, 0x8b, 0x8f, -1, -1, -1, -1,
+    // };
+    /* if (MatchesPattern(pc, load_code_disp8_aot,
+                       ARRAY_SIZE(load_code_disp8_aot))) {
+      pc -= ARRAY_SIZE(load_code_disp8_aot);
+      target_index_ = IndexFromPPLoadDisp8(pc + load_code_pc_offset_aot);
+    } else */ if (MatchesPattern(pc, load_code_disp32_aot,
+                                 ARRAY_SIZE(load_code_disp32_aot))) {
+      pc -= ARRAY_SIZE(load_code_disp32_aot);
+      target_index_ = IndexFromPPLoadDisp32(pc + load_code_pc_offset_aot);
+    } else {
+      FATAL("Failed to decode at %" Px, pc);
+    }
+    ASSERT(object_pool_.TypeAt(target_index_) ==
+           ObjectPool::EntryType::kImmediate);
+  }
+
+  void SetTarget(const Code& target) const {
+    ASSERT(object_pool_.TypeAt(target_index()) ==
+           ObjectPool::EntryType::kImmediate);
+    object_pool_.SetRawValueAt(target_index(), target.MonomorphicEntryPoint());
+  }
+
+  uword target_entry() const { return object_pool_.RawValueAt(target_index()); }
 };
 
 CodePtr CodePatcher::GetStaticCallTargetAt(uword return_address,
                                            const Code& code) {
   ASSERT(code.ContainsInstructionAt(return_address));
-  StaticCall call(return_address, code);
-  return call.target();
+  PoolPointerCall call(return_address, code);
+  return call.Target();
 }
 
 void CodePatcher::PatchStaticCallAt(uword return_address,
                                     const Code& code,
                                     const Code& new_target) {
-  auto thread = Thread::Current();
-  auto zone = thread->zone();
-  const Instructions& instrs = Instructions::Handle(zone, code.instructions());
-  thread->isolate_group()->RunWithStoppedMutators([&]() {
-    WritableInstructionsScope writable(instrs.PayloadStart(), instrs.Size());
-    ASSERT(code.ContainsInstructionAt(return_address));
-    StaticCall call(return_address, code);
-    call.set_target(new_target);
-  });
+  PatchPoolPointerCallAt(return_address, code, new_target);
 }
 
-void CodePatcher::InsertDeoptimizationCallAt(uword start) {
-  UNREACHABLE();
+void CodePatcher::PatchPoolPointerCallAt(uword return_address,
+                                         const Code& code,
+                                         const Code& new_target) {
+  ASSERT(code.ContainsInstructionAt(return_address));
+  PoolPointerCall call(return_address, code);
+  call.SetTarget(new_target);
 }
 
 CodePtr CodePatcher::GetInstanceCallAt(uword return_address,
@@ -229,14 +594,14 @@ void CodePatcher::PatchInstanceCallAtWithMutatorsStopped(
     const Code& caller_code,
     const Object& data,
     const Code& target) {
-  auto zone = thread->zone();
   ASSERT(caller_code.ContainsInstructionAt(return_address));
-  const Instructions& instrs =
-      Instructions::Handle(zone, caller_code.instructions());
-  WritableInstructionsScope writable(instrs.PayloadStart(), instrs.Size());
   InstanceCall call(return_address, caller_code);
   call.set_data(data);
   call.set_target(target);
+}
+
+void CodePatcher::InsertDeoptimizationCallAt(uword start) {
+  UNREACHABLE();
 }
 
 FunctionPtr CodePatcher::GetUnoptimizedStaticCallAt(uword return_address,
@@ -256,8 +621,12 @@ void CodePatcher::PatchSwitchableCallAt(uword return_address,
                                         const Code& caller_code,
                                         const Object& data,
                                         const Code& target) {
-  // Switchable instance calls only generated for precompilation.
-  UNREACHABLE();
+  auto thread = Thread::Current();
+  // Ensure all threads are suspended as we update data and target pair.
+  thread->isolate_group()->RunWithStoppedMutators([&]() {
+    PatchSwitchableCallAtWithMutatorsStopped(thread, return_address,
+                                             caller_code, data, target);
+  });
 }
 
 void CodePatcher::PatchSwitchableCallAtWithMutatorsStopped(
@@ -266,36 +635,58 @@ void CodePatcher::PatchSwitchableCallAtWithMutatorsStopped(
     const Code& caller_code,
     const Object& data,
     const Code& target) {
-  // Switchable instance calls only generated for precompilation.
-  UNREACHABLE();
+  if (FLAG_precompiled_mode) {
+    BareSwitchableCall call(return_address);
+    call.SetData(data);
+    call.SetTarget(target);
+  } else {
+    SwitchableCall call(return_address, caller_code);
+    call.SetData(data);
+    call.SetTarget(target);
+  }
 }
 
 uword CodePatcher::GetSwitchableCallTargetEntryAt(uword return_address,
                                                   const Code& caller_code) {
-  // Switchable instance calls only generated for precompilation.
-  UNREACHABLE();
-  return 0;
+  if (FLAG_precompiled_mode) {
+    BareSwitchableCall call(return_address);
+    return call.target_entry();
+  } else {
+    SwitchableCall call(return_address, caller_code);
+    return call.target_entry();
+  }
 }
 
 ObjectPtr CodePatcher::GetSwitchableCallDataAt(uword return_address,
                                                const Code& caller_code) {
-  // Switchable instance calls only generated for precompilation.
-  UNREACHABLE();
-  return Object::null();
+  if (FLAG_precompiled_mode) {
+    BareSwitchableCall call(return_address);
+    return call.data();
+  } else {
+    SwitchableCall call(return_address, caller_code);
+    return call.data();
+  }
 }
 
 void CodePatcher::PatchNativeCallAt(uword return_address,
                                     const Code& caller_code,
                                     NativeFunction target,
                                     const Code& trampoline) {
-  UNREACHABLE();
+  Thread::Current()->isolate_group()->RunWithStoppedMutators([&]() {
+    ASSERT(caller_code.ContainsInstructionAt(return_address));
+    NativeCall call(return_address, caller_code);
+    call.set_target(trampoline);
+    call.set_native_function(target);
+  });
 }
 
 CodePtr CodePatcher::GetNativeCallAt(uword return_address,
                                      const Code& caller_code,
                                      NativeFunction* target) {
-  UNREACHABLE();
-  return nullptr;
+  ASSERT(caller_code.ContainsInstructionAt(return_address));
+  NativeCall call(return_address, caller_code);
+  *target = call.native_function();
+  return call.target();
 }
 
 }  // namespace dart

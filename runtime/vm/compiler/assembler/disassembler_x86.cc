@@ -1662,6 +1662,11 @@ int DisassemblerX64::InstructionDecode(uword pc) {
         data += 3;
         break;
 
+      case 0xC3:
+        Print("ret");
+        data += 1;
+        break;
+
       case 0xC8:
         Print("enter %d, %d", *reinterpret_cast<uint16_t*>(data + 1), data[3]);
         data += 4;

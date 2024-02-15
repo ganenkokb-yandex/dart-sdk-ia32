@@ -200,7 +200,6 @@ config("dart_config") {
     if (dart_debug) {
       if (is_clang && dart_debug_optimization_level != "2") {
         cflags = [
-          "-d${dart_debug_optimization_level}",
           "/Oy-",
         ]
       } else {
@@ -370,4 +369,10 @@ action("generate_version_cc_file") {
   if (!verify_sdk_hash) {
     args += [ "--no_sdk_hash" ]
   }
+
+  # Yandex {
+  if (dart_version_git_info) {
+    inputs -= [ "$default_git_folder/logs/HEAD" ]
+  }
+  # } Yandex
 }

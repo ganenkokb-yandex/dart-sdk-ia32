@@ -283,7 +283,7 @@ word LookupFieldOffsetInBytes(const Field& field) {
   return field.TargetOffset();
 }
 
-#if defined(TARGET_ARCH_IA32)
+#if defined(TARGET_ARCH_IA32_UNDEFINED)
 uword SymbolsPredefinedAddress() {
   return reinterpret_cast<uword>(dart::Symbols::PredefinedAddress());
 }
@@ -649,7 +649,7 @@ const word MegamorphicCache::kSpreadFactor =
     return RoundedAllocationSize(clazz::header() + payload_size);              \
   }
 
-#if defined(TARGET_ARCH_IA32)
+#if defined(TARGET_ARCH_IA32_UNDEFINED)
 
 #define DEFINE_FIELD(clazz, name)                                              \
   word clazz::name() { return clazz##_##name; }
@@ -976,7 +976,7 @@ double DoubleValue(const dart::Object& a) {
   return dart::Double::Cast(a).value();
 }
 
-#if defined(TARGET_ARCH_IA32)
+#if defined(TARGET_ARCH_IA32_UNDEFINED)
 uword Code::EntryPointOf(const dart::Code& code) {
   static_assert(kHostWordSize == kWordSize,
                 "Can't embed raw pointers to runtime objects when host and "
@@ -994,7 +994,7 @@ word ToRawPointer(const dart::Object& a) {
                 "target word sizes are different");
   return static_cast<word>(a.ptr());
 }
-#endif  // defined(TARGET_ARCH_IA32)
+#endif  // defined(TARGET_ARCH_IA32_UNDEFINED)
 
 word RegExp::function_offset(classid_t cid, bool sticky) {
 #if !defined(DART_COMPRESSED_POINTERS)

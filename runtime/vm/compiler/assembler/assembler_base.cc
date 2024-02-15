@@ -82,7 +82,7 @@ void AssemblerBase::LoadTypeClassId(Register dst, Register src) {
   if (dst != src) {
     EnsureHasClassIdInDEBUG(kTypeCid, src, dst);
   } else {
-#if !defined(TARGET_ARCH_IA32)
+#if !defined(TARGET_ARCH_IA32_UNDEFINED)
     EnsureHasClassIdInDEBUG(kTypeCid, src, TMP);
 #else
     // Skip check on IA32 since we don't have TMP.
@@ -278,7 +278,7 @@ intptr_t AssemblerBuffer::CountPointerOffsets() const {
   return count;
 }
 
-#if defined(TARGET_ARCH_IA32)
+#if defined(TARGET_ARCH_IA32_UNDEFINED)
 void AssemblerBuffer::EmitObject(const Object& object) {
   // Since we are going to store the handle as part of the fixup information
   // the handle needs to be a zone handle.

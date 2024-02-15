@@ -303,7 +303,7 @@ Remove debugging information from the output and save it separately to the speci
     }
     // AOT compilation isn't supported on ia32. Currently, generating an
     // executable only supports AOT runtimes, so these commands are disabled.
-    if (Platform.version.contains('ia32')) {
+    if (Platform.version.contains('ia32') && false) {
       stderr.write(
           "'dart compile $commandName' is not supported on x86 architectures");
       return 64;

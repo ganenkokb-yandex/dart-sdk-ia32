@@ -362,8 +362,12 @@ class Monitor {
   }
 #else
   bool IsOwnedByCurrentThread() const {
+#if !defined(FORCE_ENABLE_ASSERT_IN_RELEASE)
     UNREACHABLE();
     return false;
+#else
+    return true;
+#endif
   }
 #endif
 
@@ -396,8 +400,12 @@ inline bool Mutex::IsOwnedByCurrentThread() const {
 #if defined(DEBUG)
   return owner_ == OSThread::GetCurrentThreadId();
 #else
+#if !defined(FORCE_ENABLE_ASSERT_IN_RELEASE)
   UNREACHABLE();
   return false;
+#else
+  return true;
+#endif
 #endif
 }
 

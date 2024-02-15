@@ -73,7 +73,8 @@ source_set("binaryen_sources") {
             exec_script("list_sources.py",
                         [ rebase_path(src_dir, root_build_dir) ],
                         "list lines",
-                        [ "$default_git_folder/logs/HEAD" ])) {
+                        #[ "$default_git_folder/logs/HEAD" ]
+                        [ ])) {
       sources += [ "$src_dir/$src_file" ]
     }
   }

@@ -147,7 +147,7 @@ NONNULLABLE_BOXED_NATIVE_SLOTS_LIST(FOR_EACH_NATIVE_SLOT)
 
 // Only define AOT-only unboxed native slots when in the precompiler. See
 // UNBOXED_NATIVE_SLOTS_LIST for the format.
-#if defined(DART_PRECOMPILER) && !defined(TARGET_ARCH_IA32)
+#if defined(DART_PRECOMPILER) && !defined(TARGET_ARCH_IA32_UNDEFINED)
 #define AOT_ONLY_UNBOXED_NATIVE_SLOTS_LIST(V)                                  \
   V(Closure, UntaggedClosure, entry_point, Uword, FINAL)
 #else

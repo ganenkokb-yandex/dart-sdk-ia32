@@ -30,14 +30,14 @@ Caller frame   | last parameter     | <- ESP of caller frame
                T against a slot indicates it needs to be traversed during GC.
 */
 
-static constexpr int kDartFrameFixedSize = 3;  // PC marker, EBP, PC.
+static constexpr int kDartFrameFixedSize = 4;  // PC marker, EBP, PC.
 static constexpr int kSavedPcSlotFromSp = -1;
 
 static constexpr int kFirstObjectSlotFromFp =
     -1;  // Used by GC to traverse stack.
 static constexpr int kLastFixedObjectSlotFromFp = -1;
 
-static constexpr int kFirstLocalSlotFromFp = -2;
+static constexpr int kFirstLocalSlotFromFp = -3;
 static constexpr int kPcMarkerSlotFromFp = -1;
 static constexpr int kSavedCallerFpSlotFromFp = 0;
 static constexpr int kSavedCallerPcSlotFromFp = 1;
@@ -46,7 +46,7 @@ static constexpr int kCallerSpSlotFromFp = 2;
 static constexpr int kLastParamSlotFromEntrySp = 1;  // Skip return address.
 
 // No pool pointer on IA32 (indicated by aliasing saved fp).
-static constexpr int kSavedCallerPpSlotFromFp = kSavedCallerFpSlotFromFp;
+static constexpr int kSavedCallerPpSlotFromFp = -2;
 
 // Entry and exit frame layout.
 static constexpr int kExitLinkSlotFromEntryFp = -8;

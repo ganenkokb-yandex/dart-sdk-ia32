@@ -42,7 +42,11 @@ ASSEMBLER_TEST_GENERATE(IcDataAccess, assembler) {
   const ICData& ic_data = ICData::ZoneHandle(ICData::New(
       function, target_name, args_descriptor, 15, 1, ICData::kInstance));
 
+  __ set_constant_pool_allowed(true);
+
+  ASSERT(ECX == IC_DATA_REG);
   __ LoadObject(ECX, ic_data);
+  __ movl(compiler::LikeABI::AllocateClosureABI_kFunctionReg, IC_DATA_REG);
   __ Call(StubCode::OneArgCheckInlineCache());
   __ ret();
 }

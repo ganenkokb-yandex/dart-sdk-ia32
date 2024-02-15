@@ -20,7 +20,7 @@
 
 namespace dart {
 
-DEFINE_FLAG(bool, intrinsify, true, "Instrinsify when possible");
+DEFINE_FLAG(bool, intrinsify, false, "Instrinsify when possible");
 DEFINE_FLAG(bool, trace_intrinsifier, false, "Trace intrinsifier");
 
 namespace compiler {

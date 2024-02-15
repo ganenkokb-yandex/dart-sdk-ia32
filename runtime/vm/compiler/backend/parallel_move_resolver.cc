@@ -351,7 +351,7 @@ Register ParallelMoveEmitter::TemporaryAllocator::AllocateTemporary() {
 #if !defined(TARGET_ARCH_IA32)
     // Need to preserve CODE_REG to be able to store the PC marker
     // and load the pool pointer.
-    blocked_mask |= RegMaskBit(CODE_REG);
+    // blocked_mask |= RegMaskBit(CODE_REG);
 #endif
   }
   reg_ = static_cast<Register>(

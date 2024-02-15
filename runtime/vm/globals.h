@@ -203,17 +203,21 @@ static constexpr intptr_t kAllocationCanary = 123;
 #endif  // !defined(DART_HOST_OS_WINDOWS))
 
 #if defined(TARGET_ARCH_ARM) || defined(TARGET_ARCH_ARM64) ||                  \
-    defined(TARGET_ARCH_X64) || defined(TARGET_ARCH_RISCV32) ||                \
+    defined(TARGET_ARCH_X64) || defined(TARGET_ARCH_IA32) || defined(TARGET_ARCH_RISCV32) ||                \
     defined(TARGET_ARCH_RISCV64)
 #define TARGET_USES_OBJECT_POOL 1
 #endif
 
 #if defined(DART_PRECOMPILER) &&                                               \
-    (defined(TARGET_ARCH_X64) || defined(TARGET_ARCH_ARM) ||                   \
+    (defined(TARGET_ARCH_X64) || defined(TARGET_ARCH_ARM) ||  defined(TARGET_ARCH_IA32) ||  \
      defined(TARGET_ARCH_ARM64) || defined(TARGET_ARCH_RISCV32) ||             \
      defined(TARGET_ARCH_RISCV64))
 #define DART_SUPPORT_PRECOMPILATION 1
 #endif
+
+#if defined(TARGET_ARCH_X64) || defined(TARGET_ARCH_IA32)
+#define USE_LIKE_ABI_SEPARATED 1
+#endif  // defined(TARGET_ARCH_X64) || defined(TARGET_ARCH_IA32)
 
 }  // namespace dart
 

@@ -180,10 +180,10 @@ CodePtr StubCode::GetAllocationStubForClass(const Class& cls) {
   switch (cls.id()) {
     case kArrayCid:
       return object_store->allocate_array_stub();
-#if !defined(TARGET_ARCH_IA32)
+#if !defined(TARGET_ARCH_IA32_UNDEFINED)
     case kGrowableObjectArrayCid:
       return object_store->allocate_growable_array_stub();
-#endif  // !defined(TARGET_ARCH_IA32)
+#endif  // !defined(TARGET_ARCH_IA32_UNDEFINED)
     case kContextCid:
       return object_store->allocate_context_stub();
     case kUnhandledExceptionCid:
@@ -312,7 +312,7 @@ CodePtr StubCode::GetAllocationStubForTypedData(classid_t class_id) {
 }
 #endif  // !defined(DART_PRECOMPILED_RUNTIME)
 
-#if !defined(TARGET_ARCH_IA32)
+#if !defined(TARGET_ARCH_IA32_UNDEFINED)
 CodePtr StubCode::GetBuildMethodExtractorStub(compiler::ObjectPoolBuilder* pool,
                                               bool generic) {
 #if !defined(DART_PRECOMPILED_RUNTIME)
@@ -354,7 +354,7 @@ CodePtr StubCode::GetBuildMethodExtractorStub(compiler::ObjectPoolBuilder* pool,
   return nullptr;
 #endif  // !defined(DART_PRECOMPILED_RUNTIME)
 }
-#endif  // !defined(TARGET_ARCH_IA32)
+#endif  // !defined(TARGET_ARCH_IA32_UNDEFINED)
 
 const Code& StubCode::UnoptimizedStaticCallEntry(intptr_t num_args_tested) {
   switch (num_args_tested) {

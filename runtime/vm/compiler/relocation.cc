@@ -12,7 +12,7 @@
 
 namespace dart {
 
-#if defined(DART_PRECOMPILER) && !defined(TARGET_ARCH_IA32)
+#if defined(DART_PRECOMPILER) && !defined(TARGET_ARCH_IA32_UNDEFINED)
 
 // Only for testing.
 DEFINE_FLAG(bool,
@@ -555,6 +555,6 @@ intptr_t CodeRelocator::AdjustPayloadOffset(intptr_t payload_offset) {
   return compiler::target::Instructions::HeaderSize() + payload_offset;
 }
 
-#endif  // defined(DART_PRECOMPILER) && !defined(TARGET_ARCH_IA32)
+#endif  // defined(DART_PRECOMPILER) && !defined(TARGET_ARCH_IA32_UNDEFINED)
 
 }  // namespace dart

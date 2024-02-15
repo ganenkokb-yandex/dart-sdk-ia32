@@ -18,11 +18,17 @@
 #include "platform/assert.h"
 #include "platform/utils.h"
 #include "vm/compiler/assembler/assembler_base.h"
+#include "vm/compiler/like_registers.h"
+#include "vm/compiler/like_registers_wrapper.h"
 #include "vm/constants.h"
 #include "vm/constants_x86.h"
 #include "vm/pointer_tagging.h"
 
 namespace dart {
+
+// Forward declarations.
+class FlowGraphCompiler;
+class RegisterSet;
 
 namespace compiler {
 
@@ -74,11 +80,15 @@ class Operand : public ValueObject {
 
   Operand(const Operand& other) : ValueObject(), length_(other.length_) {
     memmove(&encoding_[0], &other.encoding_[0], other.length_);
+    like_abi_base_ = other.like_abi_base_;
+    like_abi_index_ = other.like_abi_index_;
   }
 
   Operand& operator=(const Operand& other) {
     length_ = other.length_;
     memmove(&encoding_[0], &other.encoding_[0], other.length_);
+    like_abi_base_ = other.like_abi_base_;
+    like_abi_index_ = other.like_abi_index_;
     return *this;
   }
 
@@ -91,6 +101,10 @@ class Operand : public ValueObject {
   }
 
  protected:
+  dart::compiler::LikeABI like_abi_base_ = dart::compiler::LikeABI::kNoRegister;
+  dart::compiler::LikeABI like_abi_index_ =
+      dart::compiler::LikeABI::kNoRegister;
+
   Operand() : length_(0) {}  // Needed by subclass Address.
 
   void SetModRM(int mod, Register rm) {
@@ -144,6 +158,7 @@ class Operand : public ValueObject {
 class Address : public Operand {
  public:
   Address(Register base, int32_t disp) {
+    regs_tracker_.MarkRegAsAddressPart(base);
     if (disp == 0 && base != EBP) {
       SetModRM(0, base);
       if (base == ESP) SetSIB(TIMES_1, ESP, base);
@@ -158,7 +173,19 @@ class Address : public Operand {
     }
   }
 
+  Address(dart::compiler::LikeABI base, int32_t disp)
+      : Address(Register::kNoRegister, disp) {
+    ASSERT(base != dart::compiler::LikeABI::kNoRegister);
+    like_abi_base_ = base;
+    make_address_ = [disp](Register new_base, Register new_index) {
+      ASSERT(new_base != kNoRegister);
+      ASSERT(new_index == kNoRegister);
+      return Address(new_base, disp);
+    };
+  }
+
   Address(Register index, ScaleFactor scale, int32_t disp) {
+    regs_tracker_.MarkRegAsAddressPart(index);
     ASSERT(index != ESP);       // Illegal addressing mode.
     ASSERT(scale != TIMES_16);  // Unsupported scale factor.
     SetModRM(0, ESP);
@@ -170,6 +197,8 @@ class Address : public Operand {
   Address(Register index, ScaleFactor scale, Register r);
 
   Address(Register base, Register index, ScaleFactor scale, int32_t disp) {
+    regs_tracker_.MarkRegAsAddressPart(base);
+    regs_tracker_.MarkRegAsAddressPart(index);
     ASSERT(index != ESP);       // Illegal addressing mode.
     ASSERT(scale != TIMES_16);  // Unsupported scale factor.
     if (disp == 0 && base != EBP) {
@@ -186,17 +215,71 @@ class Address : public Operand {
     }
   }
 
+  Address(dart::compiler::LikeABI base,
+          Register index,
+          ScaleFactor scale,
+          int32_t disp)
+      : Address(Register::kNoRegister, index, scale, disp) {
+    ASSERT(base != dart::compiler::LikeABI::kNoRegister);
+    like_abi_base_ = base;
+    make_address_ = [index, scale, disp](Register new_base,
+                                         Register new_index) {
+      ASSERT(new_base != kNoRegister);
+      ASSERT(new_index == kNoRegister);
+      return Address(new_base, index, scale, disp);
+    };
+  }
+
+  Address(Register base,
+          dart::compiler::LikeABI index,
+          ScaleFactor scale,
+          int32_t disp)
+      : Address(base, Register::kNoRegister, scale, disp) {
+    ASSERT(index != dart::compiler::LikeABI::kNoRegister);
+    like_abi_index_ = index;
+    make_address_ = [base, scale, disp](Register new_base, Register new_index) {
+      ASSERT(new_base == kNoRegister);
+      ASSERT(new_index != kNoRegister);
+      return Address(base, new_index, scale, disp);
+    };
+  }
+
+  Address(dart::compiler::LikeABI base,
+          dart::compiler::LikeABI index,
+          ScaleFactor scale,
+          int32_t disp)
+      : Address(Register::kNoRegister, Register::kNoRegister, scale, disp) {
+    ASSERT(base != dart::compiler::LikeABI::kNoRegister);
+    ASSERT(index != dart::compiler::LikeABI::kNoRegister);
+    like_abi_base_ = base;
+    like_abi_index_ = index;
+    make_address_ = [scale, disp](Register new_base, Register new_index) {
+      ASSERT(new_base != kNoRegister);
+      ASSERT(new_index != kNoRegister);
+      return Address(new_base, new_index, scale, disp);
+    };
+  }
+
   // This addressing mode does not exist.
   Address(Register base, Register index, ScaleFactor scale, Register r);
 
-  Address(const Address& other) : Operand(other) {}
+  Address(const Address& other)
+      : Operand(other),
+        regs_tracker_(other.regs_tracker_),
+        make_address_(other.make_address_) {}
 
   Address& operator=(const Address& other) {
     Operand::operator=(other);
+    regs_tracker_ = other.regs_tracker_;
+    make_address_ = other.make_address_;
     return *this;
   }
 
-  static Address Absolute(const uword addr) {
+  Address MakeAddress(Register new_base, Register new_index) const {
+    return make_address_(new_base, new_index);
+  }
+
+  static Address AbsoluteForTest(const uword addr) {
     Address result;
     result.SetModRM(0, EBP);
     result.SetDisp32(addr);
@@ -205,11 +288,17 @@ class Address : public Operand {
 
  private:
   Address() {}  // Needed by Address::Absolute.
+
+  AddressRegsTracker regs_tracker_;
+  std::function<Address(Register new_base, Register new_index)> make_address_;
 };
 
 class FieldAddress : public Address {
  public:
   FieldAddress(Register base, int32_t disp)
+      : Address(base, disp - kHeapObjectTag) {}
+
+  FieldAddress(dart::compiler::LikeABI base, int32_t disp)
       : Address(base, disp - kHeapObjectTag) {}
 
   // This addressing mode does not exist.
@@ -220,6 +309,12 @@ class FieldAddress : public Address {
 
   // This addressing mode does not exist.
   FieldAddress(Register base, Register index, ScaleFactor scale, Register r);
+
+  FieldAddress(Register base,
+               dart::compiler::LikeABI index,
+               ScaleFactor scale,
+               int32_t disp)
+      : Address(base, index, scale, disp - kHeapObjectTag) {}
 
   FieldAddress(const FieldAddress& other) : Address(other) {}
 
@@ -232,13 +327,7 @@ class FieldAddress : public Address {
 class Assembler : public AssemblerBase {
  public:
   explicit Assembler(ObjectPoolBuilder* object_pool_builder,
-                     intptr_t far_branch_level = 0)
-      : AssemblerBase(object_pool_builder),
-        jit_cookie_(0),
-        code_(NewZoneHandle(ThreadState::Current()->zone())) {
-    // This mode is only needed and implemented for ARM.
-    ASSERT(far_branch_level == 0);
-  }
+                     intptr_t far_branch_level = 0);
   ~Assembler() {}
 
   /*
@@ -668,7 +757,9 @@ class Assembler : public AssemblerBase {
                      OperandSize sz = kFourBytes) {
     StoreToOffset(src, Address(base, offset), sz);
   }
+#if defined(USE_ORIG_IA32)
   void StoreToOffset(const Object& value, const Address& address);
+#endif
   void StoreFieldToOffset(Register src,
                           Register base,
                           int32_t offset,
@@ -831,14 +922,8 @@ class Assembler : public AssemblerBase {
 
   void LoadIsolate(Register dst);
   void LoadIsolateGroup(Register dst);
-
-  void LoadUniqueObject(Register dst, const Object& object) {
-    LoadObject(dst, object, /*movable_referent=*/true);
-  }
-
-  void LoadObject(Register dst,
-                  const Object& object,
-                  bool movable_referent = false);
+  void LoadObject(Register dst, const Object& obj);
+  void LoadUniqueObject(Register dst, const Object& obj);
 
   // If 'object' is a large Smi, xor it with a per-assembler cookie value to
   // prevent user-controlled immediates from appearing in the code stream.
@@ -860,21 +945,7 @@ class Assembler : public AssemblerBase {
                        const Address& dest,  // Where we are storing into.
                        Register value,       // Value we are storing.
                        CanBeSmi can_value_be_smi = kValueCanBeSmi,
-                       MemoryOrder memory_order = kRelaxedNonAtomic) override {
-    StoreIntoObject(object, dest, value, can_value_be_smi, memory_order,
-                    kNoRegister);
-  }
-  void StoreIntoObject(Register object,      // Object we are storing into.
-                       const Address& dest,  // Where we are storing into.
-                       Register value,       // Value we are storing.
-                       CanBeSmi can_value_be_smi,
-                       MemoryOrder memory_order,
-                       Register scratch);
-  void StoreIntoArray(Register object,  // Object we are storing into.
-                      Register slot,    // Where we are storing into.
-                      Register value,   // Value we are storing.
-                      CanBeSmi can_value_be_smi = kValueCanBeSmi,
-                      Register scratch = kNoRegister);
+                       MemoryOrder memory_order = kRelaxedNonAtomic) override;
   void StoreIntoObjectNoBarrier(
       Register object,
       const Address& dest,
@@ -892,7 +963,7 @@ class Assembler : public AssemblerBase {
                              MemoryOrder memory_order = kRelaxedNonAtomic,
                              Register scratch = kNoRegister) {
     StoreIntoObject(object, FieldAddress(object, offset), value,
-                    can_value_be_smi, memory_order, scratch);
+                    can_value_be_smi, memory_order);
   }
   void StoreIntoObjectOffsetNoBarrier(
       Register object,
@@ -923,7 +994,6 @@ class Assembler : public AssemblerBase {
   void IncrementSmiField(const Address& dest, int32_t increment);
 
   void DoubleNegate(XmmRegister d);
-  void FloatNegate(XmmRegister f);
 
   void DoubleAbs(XmmRegister reg);
 
@@ -972,12 +1042,12 @@ class Assembler : public AssemblerBase {
   // For non-leaf runtime calls. For leaf runtime calls, use LeafRuntimeScope,
   void CallRuntime(const RuntimeEntry& entry, intptr_t argument_count);
 
-  void Call(const Code& code,
-            bool movable_target = false,
-            CodeEntryKind entry_kind = CodeEntryKind::kNormal);
-  // Will not clobber any registers and can therefore be called with 5 live
-  // registers.
-  void CallVmStub(const Code& code);
+  void Call(const Code& stub_entry);
+  // Emit a call that shares its object pool entries with other calls
+  // that have the same equivalence marker.
+  void CallWithEquivalence(const Code& code,
+                           const Object& equivalence,
+                           CodeEntryKind entry_kind = CodeEntryKind::kNormal);
 
   void Call(Address target) { call(target); }
 
@@ -1131,7 +1201,9 @@ class Assembler : public AssemblerBase {
   //   call L
   //   L: <code to adjust saved pc if there is any intrinsification code>
   //   .....
-  void EnterDartFrame(intptr_t frame_size);
+  void EnterDartFrame(
+      intptr_t frame_size,
+      dart::compiler::LikeABI new_pp = dart::compiler::LikeABI::kNoRegister);
   void LeaveDartFrame();
 
   // Set up a Dart frame for a function compiled for on-stack replacement.
@@ -1180,7 +1252,7 @@ class Assembler : public AssemblerBase {
   // which will allocate in the runtime where tracing occurs.
   void MaybeTraceAllocation(intptr_t cid,
                             Label* trace,
-                            Register temp_reg,
+                            dart::compiler::LikeABI temp_reg,
                             JumpDistance distance = JumpDistance::kFarJump);
 
   void TryAllocateObject(intptr_t cid,
@@ -1249,7 +1321,1020 @@ class Assembler : public AssemblerBase {
 
   void PushCodeObject();
 
+#define OBJ(op) op##l
+
+#define Q2L_R(fooq, fool)                                                      \
+  void fooq(Register dst) { fool(dst); }
+
+#define Q2L_L(fooq, fool)                                                      \
+  void fooq(dart::compiler::LikeABI dst) { fool(dst); }
+
+#define Q2L_A(fooq, fool)                                                      \
+  void fooq(const Address& dst) { fool(dst); }
+
+#define Q2L_I(fooq, fool)                                                      \
+  void fooq(const Immediate& dst) { fool(dst); }
+
+#define Q2L_RI(fooq, fool)                                                     \
+  void fooq(Register dst, const Immediate& src) { fool(dst, src); }
+
+#define Q2L_RR(fooq, fool)                                                     \
+  void fooq(Register dst, Register src) { fool(dst, src); }
+
+#define Q2L_RL(fooq, fool)                                                     \
+  void fooq(Register dst, dart::compiler::LikeABI src) { fool(dst, src); }
+
+#define Q2L_RA(fooq, fool)                                                     \
+  void fooq(Register dst, const Address& src) { fool(dst, src); }
+
+#define Q2L_AR(fooq, fool)                                                     \
+  void fooq(const Address& dst, Register src) { fool(dst, src); }
+
+#define Q2L_LI(fooq, fool)                                                     \
+  void fooq(dart::compiler::LikeABI dst, const Immediate& src) {               \
+    fool(dst, src);                                                            \
+  }
+
+#define Q2L_LL(fooq, fool)                                                     \
+  void fooq(dart::compiler::LikeABI dst, const dart::compiler::LikeABI src) {  \
+    fool(dst, src);                                                            \
+  }
+
+#define Q2L_LA(fooq, fool)                                                     \
+  void fooq(dart::compiler::LikeABI dst, const Address& src) { fool(dst, src); }
+
+#define Q2L_LR(fooq, fool)                                                     \
+  void fooq(dart::compiler::LikeABI dst, Register src) { fool(dst, src); }
+
+#define Q2L_AL(fooq, fool)                                                     \
+  void fooq(const Address& dst, dart::compiler::LikeABI src) { fool(dst, src); }
+
+#define Q2L_AI(fooq, fool)                                                     \
+  void fooq(const Address& dst, const Immediate& src) { fool(dst, src); }
+
+  Q2L_LI(movq, movl);
+  Q2L_LL(movq, movl);
+  Q2L_LA(movq, movl);
+  Q2L_LR(movq, movl);
+  Q2L_AL(movq, movl);
+  Q2L_AR(movq, movl);
+  Q2L_RA(movq, movl);
+  Q2L_RI(movq, movl);
+  Q2L_RL(movq, movl);
+  Q2L_R(pushq, pushl);
+  Q2L_L(pushq, pushl);
+  Q2L_I(pushq, pushl);
+  Q2L_A(pushq, pushl);
+  Q2L_R(popq, popl);
+  Q2L_L(popq, popl);
+  Q2L_RA(leaq, leal);
+  Q2L_LA(leaq, leal);
+  Q2L_RA(xchgq, xchgl);
+  Q2L_RI(testq, testl);
+  Q2L_LI(testq, testl);
+  Q2L_LI(shrq, shrl);
+  Q2L_LI(andq, andl);
+  Q2L_LA(andq, andl);
+  Q2L_L(incq, incl);
+  Q2L_RI(cmpq, cmpl);
+  Q2L_RL(cmpq, cmpl);
+  Q2L_RR(cmpq, cmpl);
+  Q2L_AI(cmpq, cmpl);
+  Q2L_LI(cmpq, cmpl);
+  Q2L_LA(cmpq, cmpl);
+  Q2L_LL(cmpq, cmpl);
+  Q2L_LL(subq, subl);
+  Q2L_RI(subq, subl);
+  Q2L_LL(shlq, shll);
+  Q2L_AL(orq, orl);
+  Q2L_LR(orq, orl);
+  Q2L_LI(addq, addl);
+  Q2L_RI(addq, addl);
+  Q2L_AI(addq, addl);
+  Q2L_LR(addq, addl);
+  Q2L_RR(addq, addl);
+  Q2L_RR(xorq, xorl);
+  Q2L_LL(xorq, xorl);
+
+  using ScopedAddressReg = std::unique_ptr<MemoryRegister>;
+
+  Address UpdateAddress(const Address& address, Register reg);
+  Address UpdateAddress(const Address& address,
+                        ScopedAddressReg& reg,
+                        dart::RegList busy_regs = 0);
+
+  void PushImmediate(const Immediate& imm) { pushl(imm); }
+
+  void movb(ByteRegister dst, const Address& src);
+  void xchgl(const Address& address, Register src);
+  void testb(const Address& address, Register reg);
+
+  void AddImmediate(const Address& address, const Immediate& imm);
+
+  void AddImmediate(const Address& address, int32_t value) {
+    AddImmediate(address, Immediate(value));
+  }
+
+  void SubImmediate(const Address& address, const Immediate& imm);
+
+  void LoadNativeEntry(Register dst,
+                       const ExternalLabel* label,
+                       ObjectPoolBuilderEntry::Patchability patchable);
+
+  bool CanLoadFromObjectPool(const Object& object) const;
+  void LoadObjectHelper(Register dst, const Object& obj, bool is_unique);
+  void LoadWordFromPoolIndex(Register dst, intptr_t index);
+  void CallPatchable(const Code& code,
+                     CodeEntryKind entry_kind = CodeEntryKind::kNormal);
+
+  void StoreCompressedIntoObject(
+      Register object,      // Object we are storing into.
+      const Address& dest,  // Where we are storing into.
+      Register value,       // Value we are storing.
+      CanBeSmi can_be_smi = kValueCanBeSmi,
+      MemoryOrder memory_order = kRelaxedNonAtomic) override;
+
+  void StoreCompressedIntoArray(Register object,
+                                Register slot,
+                                Register value,
+                                CanBeSmi can_be_smi);
+  void StoreIntoArrayBarrier(Register object,
+                             Register slot,
+                             Register value,
+                             CanBeSmi can_be_smi);
+
+  void StoreObject(const Address& dst, const Object& object);
+
+  void PushRegisters(const RegisterSet& registers);
+  void PopRegisters(const RegisterSet& registers);
+
+  void GenerateUnRelocatedPcRelativeCall(intptr_t offset_into_target = 0);
+
+  // Unconditional jump to a given address in memory.
+  void Jump(const Address& address) { jmp(address); }
+
+  void RestoreCodePointer();
+
+  bool constant_pool_allowed() const;      // { return constant_pool_allowed_; }
+  void set_constant_pool_allowed(bool b);  // { constant_pool_allowed_ = b; }
+  void ExtractClassIdFromTags(Register result, Register tags);
+  void ExtractInstanceSizeFromTags(Register result, Register tags);
+  void AndImmediate(Register dst, const Immediate& imm);
+
+  void EmitOperandREX(int rm, const Operand& operand, uint8_t rex);
+  void StoreReleaseCompressed(Register src,
+                              Register address,
+                              int32_t offset = 0);
+  void StoreBarrier(Register object,  // Object we are storing into.
+                    Register value,   // Value we are storing.
+                    CanBeSmi can_be_smi);
+
+  // This emits an PC-relative tail call of the form "jmp *[rip+<offset>]".
+  //
+  // See also above for the pc-relative call.
+  void GenerateUnRelocatedPcRelativeTailCall(intptr_t offset_into_target = 0);
+
+  using AssemblerBase::MoveRegister;
+
+  void MoveRegister(Register dst, dart::compiler::LikeABI src) {
+    MemoryRegisterProvider scoped(this, dst);
+    MoveRegister(dst, scoped.RegReadOnly(src));
+  }
+
+  void MoveRegister(dart::compiler::LikeABI dst, dart::compiler::LikeABI src) {
+    MemoryRegisterProvider scoped(this);
+    MoveRegister(scoped.Reg(dst), scoped.RegReadOnly(src));
+  }
+
+  void MoveRegister(dart::compiler::LikeABI dst, Register src) {
+    MemoryRegisterProvider scoped(this, src);
+    MoveRegister(scoped.Reg(dst), src);
+  }
+
+  using AssemblerBase::LoadTypeClassId;
+
+  void LoadTypeClassId(dart::compiler::LikeABI dst,
+                       dart::compiler::LikeABI src) {
+    MemoryRegisterProvider scoped(this);
+    LoadTypeClassId(scoped.Reg(dst), scoped.RegReadOnly(src));
+  }
+
+  using AssemblerBase::CompareAbstractTypeNullabilityWith;
+
+  void CompareAbstractTypeNullabilityWith(dart::compiler::LikeABI type,
+                                          /*Nullability*/ int8_t value,
+                                          dart::compiler::LikeABI scratch) {
+    MemoryRegisterProvider scoped(this);
+    CompareAbstractTypeNullabilityWith(scoped.RegReadOnly(type), value,
+                                       scoped.RegReadOnly(scratch));
+  }
+
+  void LoadImmediate(dart::compiler::LikeABI reg, int64_t immediate) {
+    MemoryRegisterProvider scoped(this);
+    LoadImmediate(scoped.Reg(reg), immediate);
+  }
+
+  void LoadCompressedField(Register dst, const FieldAddress& address) override {
+    LoadCompressed(dst, address);
+  }
+
+  void LoadCompressedField(dart::compiler::LikeABI dst,
+                           const FieldAddress& address) {
+    MemoryRegisterProvider scoped(this);
+    LoadCompressedField(scoped.Reg(dst), address);
+  }
+
+  void LoadFieldFromOffset(dart::compiler::LikeABI dst,
+                           dart::compiler::LikeABI base,
+                           int32_t offset,
+                           OperandSize sz = kFourBytes) {
+    MemoryRegisterProvider scoped(this);
+    LoadFieldFromOffset(scoped.Reg(dst), scoped.RegReadOnly(base), offset, sz);
+  }
+
+  using AssemblerBase::LoadFromSlot;
+
+  void LoadFromSlot(dart::compiler::LikeABI dst,
+                    dart::compiler::LikeABI base,
+                    const Slot& slot) {
+    MemoryRegisterProvider scoped(this);
+    LoadFromSlot(scoped.Reg(dst), scoped.RegReadOnly(base), slot);
+  }
+
+  void LoadFromSlot(dart::compiler::LikeABI dst,
+                    Register base,
+                    const Slot& slot) {
+    MemoryRegisterProvider scoped(this, base);
+    LoadFromSlot(scoped.Reg(dst), base, slot);
+  }
+
+  void LoadFromSlot(Register dst,
+                    dart::compiler::LikeABI base,
+                    const Slot& slot) {
+    MemoryRegisterProvider scoped(this, dst);
+    LoadFromSlot(dst, scoped.RegReadOnly(base), slot);
+  }
+
+  void BranchIfBit(dart::compiler::LikeABI rn,
+                   intptr_t bit_number,
+                   Condition condition,
+                   Label* label,
+                   JumpDistance distance = kFarJump) {
+    MemoryRegisterProvider scoped(this);
+    testq(scoped.RegReadOnly(rn), Immediate(1 << bit_number));
+    j(condition, label, distance);
+  }
+
+  void LoadIndexedCompressed(Register dst,
+                             dart::compiler::LikeABI base,
+                             int32_t offset,
+                             Register index) {
+    MemoryRegisterProvider scoped(this, dst, index);
+    LoadIndexedCompressed(dst, scoped.RegReadOnly(base), offset, index);
+  }
+
+  void LoadIndexedCompressed(Register dst,
+                             Register base,
+                             int32_t offset,
+                             dart::compiler::LikeABI index) {
+    MemoryRegisterProvider scoped(this, dst);
+    LoadIndexedCompressed(dst, base, offset, scoped.RegReadOnly(index));
+  }
+
+  void LoadIndexedCompressed(dart::compiler::LikeABI dst,
+                             dart::compiler::LikeABI base,
+                             int32_t offset,
+                             dart::compiler::LikeABI index) {
+    MemoryRegisterProvider scoped(this);
+    LoadIndexedCompressed(scoped.Reg(dst), scoped.RegReadOnly(base), offset,
+                          scoped.RegReadOnly(index));
+  }
+
+  void LoadIndexedCompressed(dart::compiler::LikeABI dst,
+                             Register base,
+                             int32_t offset,
+                             dart::compiler::LikeABI index) {
+    MemoryRegisterProvider scoped(this, base);
+    LoadIndexedCompressed(scoped.Reg(dst), base, offset,
+                          scoped.RegReadOnly(index));
+  }
+
+  void LoadFromOffset(dart::compiler::LikeABI dst,
+                      Register base,
+                      int32_t offset,
+                      OperandSize sz = kFourBytes) {
+    MemoryRegisterProvider scoped(this, base);
+    LoadFromOffset(scoped.Reg(dst), base, offset, sz);
+  }
+
+  void EnsureHasClassIdInDEBUG(intptr_t cid,
+                               dart::compiler::LikeABI src,
+                               Register scratch,
+                               bool can_be_null = false) {
+    MemoryRegisterProvider scoped(this, scratch);
+    EnsureHasClassIdInDEBUG(cid, scoped.RegReadOnly(src), scratch, can_be_null);
+  }
+
+  void EnsureHasClassIdInDEBUG(intptr_t cid,
+                               dart::compiler::LikeABI src,
+                               dart::compiler::LikeABI scratch,
+                               bool can_be_null = false) {
+    MemoryRegisterProvider scoped(this);
+    EnsureHasClassIdInDEBUG(cid, scoped.RegReadOnly(src),
+                            scoped.RegReadOnly(scratch), can_be_null);
+  }
+
+  void EnsureHasClassIdInDEBUG(intptr_t cid,
+                               Register src,
+                               dart::compiler::LikeABI scratch,
+                               bool can_be_null = false) {
+    MemoryRegisterProvider scoped(this, src);
+    EnsureHasClassIdInDEBUG(cid, src, scoped.RegReadOnly(scratch), can_be_null);
+  }
+
+  using AssemblerBase::StoreToSlotNoBarrier;
+
+  void StoreToSlotNoBarrier(dart::compiler::LikeABI src,
+                            Register base,
+                            const Slot& slot) {
+    MemoryRegisterProvider scoped(this, base);
+    StoreToSlotNoBarrier(scoped.RegReadOnly(src), base, slot);
+  }
+
+  void StoreIntoObjectNoBarrier(Register object,
+                                const Address& dest,
+                                dart::compiler::LikeABI value,
+                                MemoryOrder memory_order = kRelaxedNonAtomic) {
+    MemoryRegisterProvider scoped(this, object);
+    StoreIntoObjectNoBarrier(object, dest, scoped.RegReadOnly(value),
+                             memory_order);
+  }
+
+  void MaybeTraceAllocation(intptr_t cid,
+                            Label* trace,
+                            JumpDistance distance = JumpDistance::kFarJump) {
+    MaybeTraceAllocation(cid, trace, LikeABI::TMP, distance);
+  }
+
+  void MaybeTraceAllocation(intptr_t cid,
+                            Label* trace,
+                            Register temp_reg,
+                            JumpDistance distance = JumpDistance::kFarJump) {
+    MaybeTraceAllocation(cid, trace, LikeABI::TMP, distance);
+  }
+
+  void LoadIsolateGroup(dart::compiler::LikeABI dst) {
+    MemoryRegisterProvider scoped(this);
+    LoadIsolateGroup(scoped.Reg(dst));
+  }
+
+  void AddImmediate(dart::compiler::LikeABI reg, int64_t value) {
+    MemoryRegisterProvider scoped(this);
+    AddImmediate(scoped.Reg(reg), value);
+  }
+
+  void AddImmediate(dart::compiler::LikeABI dest, Register src, int64_t value) {
+    MemoryRegisterProvider scoped(this, src);
+    AddImmediate(scoped.Reg(dest), src, value);
+  }
+
+  void AddImmediate(dart::compiler::LikeABI dest,
+                    dart::compiler::LikeABI src,
+                    int64_t value) {
+    MemoryRegisterProvider scoped(this);
+    AddImmediate(scoped.Reg(dest), scoped.RegReadOnly(src), value);
+  }
+
+  void AndImmediate(dart::compiler::LikeABI dst, int64_t value) {
+    MemoryRegisterProvider scoped(this);
+    AndImmediate(scoped.Reg(dst), value);
+  }
+
+  void LoadFromOffset(dart::compiler::LikeABI dst,
+                      const Address& address,
+                      OperandSize sz = kFourBytes) {
+    MemoryRegisterProvider scoped(this);
+    LoadFromOffset(scoped.Reg(dst), address, sz);
+  }
+
+  void AddRegisters(dart::compiler::LikeABI dest, Register src) {
+    MemoryRegisterProvider scoped(this, src);
+    AddRegisters(scoped.Reg(dest), src);
+  }
+
+  void AddRegisters(Register dest, dart::compiler::LikeABI src) {
+    MemoryRegisterProvider scoped(this, dest);
+    AddRegisters(dest, scoped.RegReadOnly(src));
+  }
+
+  void AddRegisters(dart::compiler::LikeABI dest, dart::compiler::LikeABI src) {
+    MemoryRegisterProvider scoped(this);
+    AddRegisters(scoped.Reg(dest), scoped.RegReadOnly(src));
+  }
+
+  void CompareWithMemoryValue(dart::compiler::LikeABI value,
+                              Address address,
+                              OperandSize size = kFourBytes) {
+    MemoryRegisterProvider scoped(this);
+    CompareWithMemoryValue(scoped.RegReadOnly(value), address, size);
+  }
+
+  void StoreToOffset(dart::compiler::LikeABI src,
+                     const Address& address,
+                     OperandSize sz = kFourBytes) {
+    MemoryRegisterProvider scoped(this);
+    StoreToOffset(scoped.Reg(src), address, sz);
+  }
+
+  void SubRegisters(dart::compiler::LikeABI dest, Register src) {
+    MemoryRegisterProvider scoped(this, src);
+    SubRegisters(scoped.Reg(dest), src);
+  }
+
+  void SubRegisters(dart::compiler::LikeABI dest, dart::compiler::LikeABI src) {
+    MemoryRegisterProvider scoped(this);
+    SubRegisters(scoped.Reg(dest), scoped.RegReadOnly(src));
+  }
+
+  void LslImmediate(dart::compiler::LikeABI dst, int32_t shift) {
+    MemoryRegisterProvider scoped(this);
+    LslImmediate(scoped.Reg(dst), shift);
+  }
+
+  void OrImmediate(dart::compiler::LikeABI dst, int64_t value) {
+    MemoryRegisterProvider scoped(this);
+    OrImmediate(scoped.Reg(dst), value);
+  }
+
+  using AssemblerBase::StoreCompressedIntoObjectNoBarrier;
+
+  void StoreCompressedIntoObjectNoBarrier(
+      dart::compiler::LikeABI object,
+      const Address& dest,
+      dart::compiler::LikeABI value,
+      MemoryOrder memory_order = kRelaxedNonAtomic) {
+    MemoryRegisterProvider scoped(this);
+    StoreCompressedIntoObjectNoBarrier(scoped.RegReadOnly(object), dest,
+                                       scoped.RegReadOnly(value), memory_order);
+  }
+
+  void LoadObject(dart::compiler::LikeABI dst, const Object& obj) {
+    MemoryRegisterProvider scoped(this);
+    LoadObject(scoped.Reg(dst, ECX), obj);
+  }
+
+  void CompareRegisters(dart::compiler::LikeABI a, dart::compiler::LikeABI b) {
+    MemoryRegisterProvider scoped(this);
+    CompareRegisters(scoped.RegReadOnly(a), scoped.RegReadOnly(b));
+  }
+
+  void CopyMemoryWords(
+      dart::compiler::LikeABI src,
+      dart::compiler::LikeABI dst,
+      dart::compiler::LikeABI size,
+      dart::compiler::LikeABI temp = dart::compiler::LikeABI::kNoRegister) {
+    MemoryRegisterProvider scoped(this);
+    CopyMemoryWords(scoped.RegReadOnly(src), scoped.Reg(dst),
+                    scoped.RegReadOnly(size), scoped.RegReadOnly(temp));
+  }
+
+  void SmiTag(dart::compiler::LikeABI reg) {
+    MemoryRegisterProvider scoped(this);
+    SmiTag(scoped.Reg(reg));
+  }
+
+  void LoadPoolPointer(
+      dart::compiler::LikeABI pp = dart::compiler::LikeABI::PP);
+
+  void CheckCodePointer();
+
+  void LoadAcquire(dart::compiler::LikeABI dst,
+                   Register address,
+                   int32_t offset = 0,
+                   OperandSize size = kFourBytes) {
+    MemoryRegisterProvider scoped(this, address);
+    LoadAcquire(scoped.Reg(dst), address, offset, size);
+  }
+
+  void LoadAcquire(dart::compiler::LikeABI dst,
+                   dart::compiler::LikeABI address,
+                   int32_t offset = 0,
+                   OperandSize size = kFourBytes) {
+    MemoryRegisterProvider scoped(this);
+    LoadAcquire(scoped.Reg(dst), scoped.RegReadOnly(address), offset, size);
+  }
+
+  void CompareObjectRegisters(dart::compiler::LikeABI a, Register b) {
+    MemoryRegisterProvider scoped(this, b);
+    CompareObjectRegisters(scoped.RegReadOnly(a), b);
+  }
+  void CompareObjectRegisters(dart::compiler::LikeABI a,
+                              dart::compiler::LikeABI b) {
+    MemoryRegisterProvider scoped(this);
+    CompareObjectRegisters(scoped.RegReadOnly(a), scoped.RegReadOnly(b));
+  }
+
+  void LoadFromStack(dart::compiler::LikeABI dst, intptr_t depth) {
+    MemoryRegisterProvider scoped(this);
+    LoadFromStack(scoped.Reg(dst), depth);
+  }
+
+  void StoreToStack(dart::compiler::LikeABI src, intptr_t depth) {
+    MemoryRegisterProvider scoped(this);
+    StoreToStack(scoped.RegReadOnly(src), depth);
+  }
+
+  void SmiUntag(dart::compiler::LikeABI reg) {
+    MemoryRegisterProvider scoped(this);
+    SmiUntag(scoped.Reg(reg));
+  }
+
+  void LsrImmediate(dart::compiler::LikeABI dst, int32_t shift) {
+    MemoryRegisterProvider scoped(this);
+    LsrImmediate(scoped.Reg(dst), shift);
+  }
+
+  void BranchIfSmi(dart::compiler::LikeABI reg,
+                   Label* label,
+                   JumpDistance distance = kFarJump) {
+    MemoryRegisterProvider scoped(this);
+    testq(scoped.RegReadOnly(reg), Immediate(kSmiTagMask));
+    j(ZERO, label, distance);
+  }
+
+  void CombineHashes(dart::compiler::LikeABI dst,
+                     dart::compiler::LikeABI other) {
+    MemoryRegisterProvider scoped(this);
+    CombineHashes(scoped.Reg(dst), scoped.RegReadOnly(other));
+  }
+
+  void CompareRegisters(dart::compiler::LikeABI a, Register b) {
+    MemoryRegisterProvider scoped(this, b);
+    CompareRegisters(scoped.RegReadOnly(a), b);
+  }
+
+  using AssemblerBase::FinalizeHash;
+
+  void FinalizeHash(dart::compiler::LikeABI hash, Register scratch = TMP) {
+    MemoryRegisterProvider scoped(this, scratch);
+    FinalizeHash(scoped.Reg(hash), scratch);
+  }
+
+  void AndRegisters(dart::compiler::LikeABI dst,
+                    dart::compiler::LikeABI src1,
+                    Register src2 = kNoRegister) {
+    MemoryRegisterProvider scoped(this, src2);
+    AndRegisters(scoped.Reg(dst), scoped.RegReadOnly(src1), src2);
+  }
+
+  void CompareToStack(dart::compiler::LikeABI src, intptr_t depth) {
+    MemoryRegisterProvider scoped(this);
+    CompareToStack(scoped.Reg(src), depth + 1);
+  }
+
+  using AssemblerBase::LoadAcquireCompressed;
+
+  void LoadAcquireCompressed(Register dst,
+                             dart::compiler::LikeABI address,
+                             int32_t offset = 0) {
+    MemoryRegisterProvider scoped(this, dst);
+    LoadAcquireCompressed(dst, scoped.RegReadOnly(address), offset);
+  }
+
+  void LoadAcquireCompressed(dart::compiler::LikeABI dst,
+                             dart::compiler::LikeABI address,
+                             int32_t offset = 0) {
+    MemoryRegisterProvider scoped(this);
+    LoadAcquireCompressed(scoped.Reg(dst), scoped.RegReadOnly(address), offset);
+  }
+
+  void pushl(dart::compiler::LikeABI reg) {
+    LikeABIRegisters abi_regs(this);
+    abi_regs.Push(reg);
+  }
+
+  void LoadClassId(dart::compiler::LikeABI result, Register object) {
+    MemoryRegisterProvider scoped(this, object);
+    LoadClassId(scoped.Reg(result), object);
+  }
+
+  void LoadCompressed(dart::compiler::LikeABI dest, const Address& slot) {
+    MemoryRegisterProvider scoped(this);
+    LoadCompressed(scoped.Reg(dest), slot);
+  }
+
+  void LoadClassById(dart::compiler::LikeABI result, Register class_id) {
+    MemoryRegisterProvider scoped(this, class_id);
+    LoadClassById(scoped.Reg(result), class_id);
+  }
+
+  void LoadClassById(Register result, dart::compiler::LikeABI class_id) {
+    MemoryRegisterProvider scoped(this, result);
+    LoadClassById(result, scoped.RegReadOnly(class_id));
+  }
+
+  void LoadClassById(dart::compiler::LikeABI result,
+                     dart::compiler::LikeABI class_id) {
+    MemoryRegisterProvider scoped(this);
+    LoadClassById(scoped.Reg(result), scoped.RegReadOnly(class_id));
+  }
+
+  void popl(dart::compiler::LikeABI reg) {
+    LikeABIRegisters abi_regs(this);
+    abi_regs.Pop(reg);
+  }
+
+  void movl(dart::compiler::LikeABI dst, const Address& src) {
+    MemoryRegisterProvider scoped(this);
+    movl(scoped.Reg(dst), src);
+  }
+
+  void movl(dart::compiler::LikeABI dst, const Immediate& imm) {
+    LikeABIRegisters abi_regs(this);
+    movl(abi_regs.address(dst), imm);
+  }
+
+  void movl(const Address& dst, dart::compiler::LikeABI src) {
+    MemoryRegisterProvider scoped(this);
+    movl(dst, scoped.RegReadOnly(src));
+  }
+
+  void movl(dart::compiler::LikeABI dst, Register src) {
+    LikeABIRegisters abi_regs(this);
+    movq(abi_regs.address(dst), src);
+  }
+
+  void movl(Register dst, dart::compiler::LikeABI src) {
+    LikeABIRegisters abi_regs(this);
+    movq(dst, abi_regs.address(src));
+  }
+
+  void movl(dart::compiler::LikeABI dst, dart::compiler::LikeABI src) {
+    MemoryRegisterProvider scoped(this);
+    movl(scoped.Reg(dst), scoped.RegReadOnly(src));
+  }
+
+  void xchgl(Register dst, const Address& src) { xchgl(src, dst); }
+
+  void LoadUniqueObject(dart::compiler::LikeABI dst, const Object& obj) {
+    MemoryRegisterProvider scoped(this);
+    LoadUniqueObject(scoped.Reg(dst, ECX), obj);
+  }
+
+  void LoadWordFromPoolIndex(dart::compiler::LikeABI dst, intptr_t index) {
+    MemoryRegisterProvider scoped(this);
+    LoadWordFromPoolIndex(scoped.Reg(dst, ECX), index);
+  }
+
+  void testl(dart::compiler::LikeABI reg, const Immediate& imm) {
+    MemoryRegisterProvider scoped(this);
+    testl(scoped.RegReadOnly(reg), imm);
+  }
+
+  void LockCmpxchgq(const Address& address_orig, Register reg) {
+    ScopedAddressReg address_reg;
+    auto address =
+        UpdateAddress(address_orig, address_reg, (1 << reg) | (1 << EAX));
+    lock();
+    cmpxchgl(address, reg);
+  }
+
+  void LockCmpxchgq(const Address& address, dart::compiler::LikeABI reg) {
+    MemoryRegisterProvider scoped(this);
+    LockCmpxchgq(address, scoped.RegReadOnly(reg));
+  }
+
+  void cmpl(dart::compiler::LikeABI value, const Immediate& imm) {
+    MemoryRegisterProvider scoped(this);
+    cmpl(scoped.RegReadOnly(value), imm);
+  }
+
+  void subl(dart::compiler::LikeABI dest, Register src) {
+    MemoryRegisterProvider scoped(this, src);
+    subl(scoped.Reg(dest), src);
+  }
+
+  void subl(dart::compiler::LikeABI dest, dart::compiler::LikeABI src) {
+    MemoryRegisterProvider scoped(this);
+    subl(scoped.Reg(dest), scoped.RegReadOnly(src));
+  }
+
+  void andl(dart::compiler::LikeABI reg, const Immediate& imm) {
+    MemoryRegisterProvider scoped(this);
+    andl(scoped.Reg(reg), imm);
+  }
+
+  void andl(dart::compiler::LikeABI reg, Register src) {
+    MemoryRegisterProvider scoped(this, src);
+    andl(scoped.Reg(reg), src);
+  }
+
+  void orl(const Address& dst, dart::compiler::LikeABI src) {
+    MemoryRegisterProvider scoped(this);
+    orl(dst, scoped.RegReadOnly(src));
+  }
+
+  void orl(dart::compiler::LikeABI dst, Register src) {
+    MemoryRegisterProvider scoped(this, src);
+    orl(scoped.Reg(dst), src);
+  }
+
+  void incl(dart::compiler::LikeABI reg) {
+    MemoryRegisterProvider scoped(this);
+    incl(scoped.Reg(reg));
+  }
+
+  void shrl(dart::compiler::LikeABI reg, const Immediate& imm) {
+    MemoryRegisterProvider scoped(this);
+    shrl(scoped.Reg(reg), imm);
+  }
+
+  void shll(dart::compiler::LikeABI reg, Register shifter) {
+    MemoryRegisterProvider scoped(this, shifter);
+    shll(scoped.Reg(reg), shifter);
+  }
+
+  void shll(dart::compiler::LikeABI reg, dart::compiler::LikeABI shifter) {
+    MemoryRegisterProvider scoped(this);
+    auto shifter_proxy = scoped.RegReadOnly(shifter, ECX);
+    shll(scoped.Reg(reg), shifter_proxy);
+  }
+
+  void shll(dart::compiler::LikeABI reg, const Immediate& imm) {
+    MemoryRegisterProvider scoped(this);
+    shll(scoped.Reg(reg), imm);
+  }
+
+  void leal(dart::compiler::LikeABI dst, Address src) {
+    MemoryRegisterProvider scoped(this);
+    leal(scoped.Reg(dst), src);
+  }
+
+  void LoadTaggedClassIdMayBeSmi(dart::compiler::LikeABI result,
+                                 Register object) {
+    MemoryRegisterProvider scoped(this, object);
+    LoadTaggedClassIdMayBeSmi(scoped.Reg(result), object);
+  }
+
+  void cmpl(dart::compiler::LikeABI dst, dart::compiler::LikeABI src) {
+    MemoryRegisterProvider scoped(this);
+    cmpl(scoped.RegReadOnly(dst), scoped.RegReadOnly(src));
+  }
+
+  void testl(dart::compiler::LikeABI dst, dart::compiler::LikeABI src) {
+    MemoryRegisterProvider scoped(this);
+    testl(scoped.RegReadOnly(dst), scoped.RegReadOnly(src));
+  }
+
+  void addl(dart::compiler::LikeABI reg, const Immediate& imm) {
+    MemoryRegisterProvider scoped(this);
+    addl(scoped.Reg(reg), imm);
+  }
+
+  void addl(dart::compiler::LikeABI dst, Register src) {
+    MemoryRegisterProvider scoped(this, src);
+    addl(scoped.Reg(dst), src);
+  }
+
+  void addl(Register dst, dart::compiler::LikeABI src) {
+    MemoryRegisterProvider scoped(this, dst);
+    addl(dst, scoped.RegReadOnly(src));
+  }
+
+  void xorl(Register dst, dart::compiler::LikeABI src) {
+    MemoryRegisterProvider scoped(this, dst);
+    xorl(dst, scoped.RegReadOnly(src));
+  }
+
+  void xorl(dart::compiler::LikeABI dst, dart::compiler::LikeABI src) {
+    MemoryRegisterProvider scoped(this);
+    if (dst != src) {
+      xorl(scoped.Reg(dst), scoped.RegReadOnly(src));
+    } else {
+      movl(scoped.Reg(dst), Immediate(0));
+    }
+  }
+
+  void TryAllocateArray(intptr_t cid,
+                        intptr_t instance_size,
+                        Label* failure,
+                        JumpDistance distance,
+                        Register instance,
+                        dart::compiler::LikeABI end_address,
+                        Register temp) {
+    MemoryRegisterProvider scoped(this, instance, temp);
+    TryAllocateArray(cid, instance_size, failure, distance, instance,
+                     scoped.Reg(end_address), temp);
+  }
+
+  void StoreCompressedIntoObjectNoBarrier(
+      Register object,
+      const Address& dest,
+      dart::compiler::LikeABI value,
+      MemoryOrder memory_order = kRelaxedNonAtomic) {
+    MemoryRegisterProvider scoped(this, object);
+    StoreCompressedIntoObjectNoBarrier(object, dest, scoped.RegReadOnly(value),
+                                       memory_order);
+  }
+
+  void ExtractInstanceSizeFromTags(dart::compiler::LikeABI result,
+                                   dart::compiler::LikeABI tags) {
+    MemoryRegisterProvider scoped(this);
+    ExtractInstanceSizeFromTags(scoped.Reg(result), scoped.RegReadOnly(tags));
+  }
+
+  void ExtractClassIdFromTags(dart::compiler::LikeABI result,
+                              dart::compiler::LikeABI tags) {
+    MemoryRegisterProvider scoped(this);
+    ExtractClassIdFromTags(scoped.Reg(result), scoped.RegReadOnly(tags));
+  }
+
+  void cmpl(dart::compiler::LikeABI dst, Address src) {
+    MemoryRegisterProvider scoped(this);
+    cmpl(scoped.RegReadOnly(dst), src);
+  }
+
+  void cmpl(Register dst, dart::compiler::LikeABI src) {
+    MemoryRegisterProvider scoped(this, dst);
+    cmpl(dst, scoped.RegReadOnly(src));
+  }
+
+  void StoreCompressedIntoObject(
+      Register object,                // Object we are storing into.
+      const Address& dest,            // Where we are storing into.
+      dart::compiler::LikeABI value,  // Value we are storing.
+      CanBeSmi can_be_smi = kValueCanBeSmi,
+      MemoryOrder memory_order = kRelaxedNonAtomic) {
+    MemoryRegisterProvider scoped(this, object);
+    StoreCompressedIntoObject(object, dest, scoped.RegReadOnly(value),
+                              can_be_smi, memory_order);
+  }
+
+  void LoadIsolate(dart::compiler::LikeABI dst) {
+    MemoryRegisterProvider scoped(this);
+    LoadIsolate(scoped.Reg(dst));
+  }
+
+  void LoadTaggedClassIdMayBeSmi(dart::compiler::LikeABI result,
+                                 dart::compiler::LikeABI object) {
+    MemoryRegisterProvider scoped(this);
+    LoadTaggedClassIdMayBeSmi(scoped.Reg(result), scoped.RegReadOnly(object));
+  }
+
+  void movzxw(dart::compiler::LikeABI dst, Address src) {
+    MemoryRegisterProvider scoped(this);
+    movzxw(scoped.Reg(dst), src);
+  }
+
+  void LoadMemoryValue(dart::compiler::LikeABI dst,
+                       Register base,
+                       int32_t offset) {
+    MemoryRegisterProvider scoped(this, base);
+    LoadMemoryValue(scoped.Reg(dst), base, offset);
+  }
+
+  void StoreFieldToOffset(dart::compiler::LikeABI src,
+                          Register base,
+                          int32_t offset,
+                          OperandSize sz = kFourBytes) {
+    MemoryRegisterProvider scoped(this, base);
+    StoreFieldToOffset(scoped.RegReadOnly(src), base, offset, sz);
+  }
+
+  void LoadCompressedFieldFromOffset(dart::compiler::LikeABI dst,
+                                     Register base,
+                                     int32_t offset) {
+    MemoryRegisterProvider scoped(this, base);
+    LoadCompressedFieldFromOffset(scoped.Reg(dst), base, offset);
+  }
+
+  void LoadCompressedFieldFromOffset(Register dst,
+                                     dart::compiler::LikeABI base,
+                                     int32_t offset) {
+    MemoryRegisterProvider scoped(this, dst);
+    LoadCompressedFieldFromOffset(dst, scoped.RegReadOnly(base), offset);
+  }
+
+  void LoadCompressedFieldFromOffset(dart::compiler::LikeABI dst,
+                                     dart::compiler::LikeABI base,
+                                     int32_t offset) {
+    MemoryRegisterProvider scoped(this);
+    LoadCompressedFieldFromOffset(scoped.Reg(dst), scoped.RegReadOnly(base),
+                                  offset);
+  }
+
+  void PushRegister(dart::compiler::LikeABI r) { pushl(r); }
+
+  void PopRegister(dart::compiler::LikeABI r) { popl(r); }
+
+  struct AnyReg {
+    AnyReg(Register in_reg) { reg = in_reg; }
+
+    AnyReg(dart::compiler::LikeABI reg) {
+      reg_abi = reg;
+      is_reg_abi = true;
+    }
+
+    Register reg = Register::kNoRegister;
+    dart::compiler::LikeABI reg_abi = dart::compiler::LikeABI::kNoRegister;
+    bool is_reg_abi = false;
+  };
+
+  void PushRegistersInOrder(std::initializer_list<AnyReg> regs) {
+    for (AnyReg reg : regs) {
+      if (reg.is_reg_abi) {
+        PushRegister(reg.reg_abi);
+      } else {
+        PushRegister(reg.reg);
+      }
+    }
+  }
+
+  void CompareImmediate(dart::compiler::LikeABI reg,
+                        int64_t immediate,
+                        OperandSize width = kFourBytes) {
+    MemoryRegisterProvider scoped(this);
+    CompareImmediate(scoped.RegReadOnly(reg), immediate, width);
+  }
+
+  void CompareObject(dart::compiler::LikeABI reg, const Object& object) {
+    MemoryRegisterProvider scoped(this);
+    CompareObject(scoped.RegReadOnly(reg), object);
+  }
+
+  void CompareClassId(
+      dart::compiler::LikeABI object,
+      intptr_t class_id,
+      dart::compiler::LikeABI scratch = dart::compiler::LikeABI::kNoRegister) {
+    MemoryRegisterProvider scoped(this);
+    CompareClassId(scoped.RegReadOnly(object), class_id,
+                   scoped.RegReadOnly(scratch));
+  }
+
+  void CompareClassId(
+      Register object,
+      intptr_t class_id,
+      dart::compiler::LikeABI scratch = dart::compiler::LikeABI::kNoRegister) {
+    MemoryRegisterProvider scoped(this, object);
+    CompareClassId(object, class_id, scoped.RegReadOnly(scratch));
+  }
+
+  void LoadClassIdMayBeSmi(dart::compiler::LikeABI result, Register object) {
+    MemoryRegisterProvider scoped(this, object);
+    LoadClassIdMayBeSmi(scoped.Reg(result), object);
+  }
+
+  void LoadClassIdMayBeSmi(dart::compiler::LikeABI result,
+                           dart::compiler::LikeABI object) {
+    MemoryRegisterProvider scoped(this);
+    LoadClassIdMayBeSmi(scoped.Reg(result), scoped.RegReadOnly(object));
+  }
+
+  void MoveMemoryToMemory(Address to, Address from) {
+    MemoryRegisterProvider scoped(this);
+    MoveMemoryToMemory(to, from,
+                       scoped.RegReadOnly(dart::compiler::LikeABI::TMP));
+  }
+
+  void CheckAllocationCanary(dart::compiler::LikeABI top) {
+    MemoryRegisterProvider scoped(this);
+    CheckAllocationCanary(scoped.RegReadOnly(top));
+  }
+
+  void WriteAllocationCanary(dart::compiler::LikeABI top) {
+    MemoryRegisterProvider scoped(this);
+    WriteAllocationCanary(scoped.RegReadOnly(top));
+  }
+
+  void andl(dart::compiler::LikeABI reg, const Address& src) {
+    MemoryRegisterProvider scoped(this);
+    andl(scoped.Reg(reg), src);
+  }
+
+  void MoveImmediate(const Address& dst, const Immediate& imm) {
+    movl(dst, imm);
+  }
+
+  void CompareImmediate(Register reg,
+                        const Immediate& immediate,
+                        OperandSize width = kFourBytes) {
+    ASSERT_EQUAL(width, kFourBytes);
+    cmpl(reg, immediate);
+  }
+
+  void LoadDispatchTable(Register dst);
+
+  void NopWithId(int id) {
+    nop();
+    pushq(EAX);
+    movq(EAX, Immediate(id));
+    popq(EAX);
+    nop();
+  }
+
  private:
+  bool constant_pool_allowed_ = false;
+
   void Alu(int bytes, uint8_t opcode, Register dst, Register src);
   void Alu(uint8_t modrm_opcode, Register dst, const Immediate& imm);
   void Alu(int bytes, uint8_t opcode, Register dst, const Address& src);
@@ -1277,6 +2362,9 @@ class Assembler : public AssemblerBase {
 
   int32_t jit_cookie_;
   Object& code_;
+  friend class dart::FlowGraphCompiler;
+  std::function<void(Register reg)> generate_invoke_write_barrier_wrapper_;
+  std::function<void()> generate_invoke_array_write_barrier_;
 
   DISALLOW_ALLOCATION();
   DISALLOW_COPY_AND_ASSIGN(Assembler);

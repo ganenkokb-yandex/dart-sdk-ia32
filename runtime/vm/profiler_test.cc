@@ -501,7 +501,7 @@ ISOLATE_UNIT_TEST_CASE(Profiler_TrivialRecordAllocation) {
 
     // Move down from the root.
     EXPECT_STREQ("DRT_AllocateObject", walker.VMTagName());
-#if defined(TARGET_ARCH_IA32)  // Alloc. stub not impl. for ia32.
+#if defined(TARGET_ARCH_IA32_UNDEFINED)  // Alloc. stub not impl. for ia32.
     EXPECT_STREQ("[Stub] Allocate A", walker.CurrentName());
 #else
     EXPECT_STREQ("[Stub] AllocateObjectSlow", walker.CurrentName());
@@ -592,7 +592,7 @@ ISOLATE_UNIT_TEST_CASE(Profiler_ToggleRecordAllocation) {
     ProfileStackWalker walker(&profile);
 
     EXPECT_STREQ("DRT_AllocateObject", walker.VMTagName());
-#if defined(TARGET_ARCH_IA32)  // Alloc. stub not impl. for ia32.
+#if defined(TARGET_ARCH_IA32_UNDEFINED)  // Alloc. stub not impl. for ia32.
     EXPECT_STREQ("[Stub] Allocate A", walker.CurrentName());
 #else
     EXPECT_STREQ("[Stub] AllocateObjectSlow", walker.CurrentName());
@@ -678,7 +678,7 @@ ISOLATE_UNIT_TEST_CASE(Profiler_CodeTicks) {
 
     // Move down from the root.
     EXPECT_STREQ("DRT_AllocateObject", walker.VMTagName());
-#if defined(TARGET_ARCH_IA32)  // Alloc. stub not impl. for ia32.
+#if defined(TARGET_ARCH_IA32_UNDEFINED)  // Alloc. stub not impl. for ia32.
     EXPECT_STREQ("[Stub] Allocate A", walker.CurrentName());
 #else
     EXPECT_STREQ("[Stub] AllocateObjectSlow", walker.CurrentName());
@@ -751,7 +751,7 @@ ISOLATE_UNIT_TEST_CASE(Profiler_FunctionTicks) {
 
     EXPECT_STREQ("DRT_AllocateObject", walker.VMTagName());
 
-#if defined(TARGET_ARCH_IA32)  // Alloc. stub not impl. for ia32.
+#if defined(TARGET_ARCH_IA32_UNDEFINED)  // Alloc. stub not impl. for ia32.
     EXPECT_STREQ("[Stub] Allocate A", walker.CurrentName());
 #else
     EXPECT_STREQ("[Stub] AllocateObjectSlow", walker.CurrentName());
@@ -1336,7 +1336,7 @@ ISOLATE_UNIT_TEST_CASE(Profiler_FunctionInline) {
       ProfileStackWalker walker(&profile);
       // We have two code objects: mainA and B.boo.
       EXPECT_STREQ("DRT_AllocateObject", walker.VMTagName());
-#if defined(TARGET_ARCH_IA32)  // Alloc. stub not impl. for ia32.
+#if defined(TARGET_ARCH_IA32_UNDEFINED)  // Alloc. stub not impl. for ia32.
       EXPECT_STREQ("[Stub] Allocate A", walker.CurrentName());
 #else
       EXPECT_STREQ("[Stub] AllocateObjectSlow", walker.CurrentName());
@@ -1356,7 +1356,7 @@ ISOLATE_UNIT_TEST_CASE(Profiler_FunctionInline) {
       // Inline expansion should show us the complete call chain:
       // mainA -> B.boo -> B.foo -> B.choo.
       EXPECT_STREQ("DRT_AllocateObject", walker.VMTagName());
-#if defined(TARGET_ARCH_IA32)  // Alloc. stub not impl. for ia32.
+#if defined(TARGET_ARCH_IA32_UNDEFINED)  // Alloc. stub not impl. for ia32.
       EXPECT_STREQ("[Stub] Allocate A", walker.CurrentName());
 #else
       EXPECT_STREQ("[Stub] AllocateObjectSlow", walker.CurrentName());
@@ -1479,7 +1479,7 @@ ISOLATE_UNIT_TEST_CASE(Profiler_InliningIntervalBoundary) {
 
     // Inline expansion should show us the complete call chain:
     EXPECT_STREQ("DRT_AllocateObject", walker.VMTagName());
-#if defined(TARGET_ARCH_IA32)  // Alloc. stub not impl. for ia32.
+#if defined(TARGET_ARCH_IA32_UNDEFINED)  // Alloc. stub not impl. for ia32.
     EXPECT_STREQ("[Stub] Allocate A", walker.CurrentName());
 #else
     EXPECT_STREQ("[Stub] AllocateObjectSlow", walker.CurrentName());
@@ -1554,7 +1554,7 @@ ISOLATE_UNIT_TEST_CASE(Profiler_ChainedSamples) {
     ProfileStackWalker walker(&profile);
 
     EXPECT_STREQ("DRT_AllocateObject", walker.VMTagName());
-#if defined(TARGET_ARCH_IA32)  // Alloc. stub not impl. for ia32.
+#if defined(TARGET_ARCH_IA32_UNDEFINED)  // Alloc. stub not impl. for ia32.
     EXPECT_STREQ("[Stub] Allocate A", walker.CurrentName());
 #else
     EXPECT_STREQ("[Stub] AllocateObjectSlow", walker.CurrentName());
@@ -1648,7 +1648,7 @@ ISOLATE_UNIT_TEST_CASE(Profiler_BasicSourcePosition) {
     ProfileStackWalker walker(&profile, true);
 
     EXPECT_STREQ("DRT_AllocateObject", walker.VMTagName());
-#if defined(TARGET_ARCH_IA32)  // Alloc. stub not impl. for ia32.
+#if defined(TARGET_ARCH_IA32_UNDEFINED)  // Alloc. stub not impl. for ia32.
     EXPECT_STREQ("[Stub] Allocate A", walker.CurrentName());
 #else
     EXPECT_STREQ("[Stub] AllocateObjectSlow", walker.CurrentName());
@@ -1730,7 +1730,7 @@ ISOLATE_UNIT_TEST_CASE(Profiler_BasicSourcePositionOptimized) {
 
     // Move down from the root.
     EXPECT_STREQ("DRT_AllocateObject", walker.VMTagName());
-#if defined(TARGET_ARCH_IA32)  // Alloc. stub not impl. for ia32.
+#if defined(TARGET_ARCH_IA32_UNDEFINED)  // Alloc. stub not impl. for ia32.
     EXPECT_STREQ("[Stub] Allocate A", walker.CurrentName());
 #else
     EXPECT_STREQ("[Stub] AllocateObjectSlow", walker.CurrentName());
@@ -1806,7 +1806,7 @@ ISOLATE_UNIT_TEST_CASE(Profiler_SourcePosition) {
     ProfileStackWalker walker(&profile, true);
 
     EXPECT_STREQ("DRT_AllocateObject", walker.VMTagName());
-#if defined(TARGET_ARCH_IA32)  // Alloc. stub not impl. for ia32.
+#if defined(TARGET_ARCH_IA32_UNDEFINED)  // Alloc. stub not impl. for ia32.
     EXPECT_STREQ("[Stub] Allocate A", walker.CurrentName());
 #else
     EXPECT_STREQ("[Stub] AllocateObjectSlow", walker.CurrentName());
@@ -1914,7 +1914,7 @@ ISOLATE_UNIT_TEST_CASE(Profiler_SourcePositionOptimized) {
     ProfileStackWalker walker(&profile, true);
 
     EXPECT_STREQ("DRT_AllocateObject", walker.VMTagName());
-#if defined(TARGET_ARCH_IA32)  // Alloc. stub not impl. for ia32.
+#if defined(TARGET_ARCH_IA32_UNDEFINED)  // Alloc. stub not impl. for ia32.
     EXPECT_STREQ("[Stub] Allocate A", walker.CurrentName());
 #else
     EXPECT_STREQ("[Stub] AllocateObjectSlow", walker.CurrentName());
@@ -2008,7 +2008,7 @@ ISOLATE_UNIT_TEST_CASE(Profiler_BinaryOperatorSourcePosition) {
     ProfileStackWalker walker(&profile, true);
 
     EXPECT_STREQ("DRT_AllocateObject", walker.VMTagName());
-#if defined(TARGET_ARCH_IA32)  // Alloc. stub not impl. for ia32.
+#if defined(TARGET_ARCH_IA32_UNDEFINED)  // Alloc. stub not impl. for ia32.
     EXPECT_STREQ("[Stub] Allocate A", walker.CurrentName());
 #else
     EXPECT_STREQ("[Stub] AllocateObjectSlow", walker.CurrentName());
@@ -2125,7 +2125,7 @@ ISOLATE_UNIT_TEST_CASE(Profiler_BinaryOperatorSourcePositionOptimized) {
     ProfileStackWalker walker(&profile, true);
 
     EXPECT_STREQ("DRT_AllocateObject", walker.VMTagName());
-#if defined(TARGET_ARCH_IA32)  // Alloc. stub not impl. for ia32.
+#if defined(TARGET_ARCH_IA32_UNDEFINED)  // Alloc. stub not impl. for ia32.
     EXPECT_STREQ("[Stub] Allocate A", walker.CurrentName());
 #else
     EXPECT_STREQ("[Stub] AllocateObjectSlow", walker.CurrentName());

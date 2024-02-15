@@ -9,10 +9,13 @@
 #error "AOT runtime should not use compiler sources (including header files)"
 #endif  // defined(DART_PRECOMPILED_RUNTIME)
 
+#include <set>
+
 #include "vm/allocation.h"
 #include "vm/bitfield.h"
 #include "vm/bitmap.h"
 #include "vm/compiler/assembler/assembler.h"
+#include "vm/compiler/like_registers.h"
 #include "vm/constants.h"
 #include "vm/cpu.h"
 
@@ -65,7 +68,7 @@ enum Representation {
 #define DECLARE_REPRESENTATION(name, __, ___) k##name,
   FOR_EACH_REPRESENTATION_KIND(DECLARE_REPRESENTATION)
 #undef DECLARE_REPRESENTATION
-      kNumRepresentations
+  kNumRepresentations
 };
 
 static constexpr intptr_t kMaxLocationCount = 2;
@@ -187,6 +190,7 @@ class Location : public ValueObject {
     // FpuRegister location represents a fixed fpu register.  Payload contains
     // its code.
     kFpuRegister = 6 << 2,
+    kLikeABIRegister = 7 << 2,
   };
 
   Location() : value_(kInvalidLocation) {
@@ -331,6 +335,14 @@ class Location : public ValueObject {
     return Location(kRegister, reg);
   }
 
+  static Location RegisterLocation(dart::compiler::LikeABI reg) {
+    return Location(kRegister, FindOrigReg(reg));
+  }
+
+  static Location RegisterLikeABILocation(compiler::LikeABI reg) {
+    return Location(kLikeABIRegister, static_cast<int>(reg));
+  }
+
   bool IsRegister() const { return kind() == kRegister; }
 
   Register reg() const {
@@ -344,10 +356,16 @@ class Location : public ValueObject {
   }
 
   bool IsFpuRegister() const { return kind() == kFpuRegister; }
+  bool IsLikeABIRegister() const { return kind() == kLikeABIRegister; }
 
   FpuRegister fpu_reg() const {
     ASSERT(IsFpuRegister());
     return static_cast<FpuRegister>(payload());
+  }
+
+  compiler::LikeABI LikeABI_reg() const {
+    ASSERT(IsLikeABIRegister());
+    return static_cast<compiler::LikeABI>(payload());
   }
 
   static bool IsMachineRegisterKind(Kind kind) {
@@ -668,6 +686,14 @@ class RegisterSet : public ValueObject {
     Add(Location::RegisterLocation(reg), rep);
   }
 
+  void AddRegister(compiler::LikeABI reg, Representation rep = kTagged) {
+    Add(Location::RegisterLikeABILocation(reg), rep);
+  }
+
+  void AddLikeABIRegister(compiler::LikeABI reg, Representation rep = kTagged) {
+    Add(Location::RegisterLikeABILocation(reg), rep);
+  }
+
   void Add(Location loc, Representation rep = kTagged) {
     if (loc.IsRegister()) {
       cpu_registers_.Add(loc.reg());
@@ -677,6 +703,8 @@ class RegisterSet : public ValueObject {
       }
     } else if (loc.IsFpuRegister()) {
       fpu_registers_.Add(loc.fpu_reg());
+    } else if (loc.IsLikeABIRegister()) {
+      like_abi_registers_.insert(loc.LikeABI_reg());
     }
   }
 
@@ -741,10 +769,13 @@ class RegisterSet : public ValueObject {
     cpu_registers_.Clear();
     fpu_registers_.Clear();
     untagged_cpu_registers_.Clear();
+    like_abi_registers_.clear();
   }
 
   void Write(FlowGraphSerializer* s) const;
   explicit RegisterSet(FlowGraphDeserializer* d);
+
+  std::set<compiler::LikeABI> like_abi_registers_;
 
  private:
   SmallSet<Register> cpu_registers_;

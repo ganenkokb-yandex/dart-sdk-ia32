@@ -14,10 +14,15 @@
 #error both DEBUG and NDEBUG defined
 #endif
 
+#if !defined(DEBUG) && !defined(TESTING) && 0
+#define FORCE_ENABLE_ASSERT_IN_RELEASE
+#endif
+
 // TODO(5411406): include sstream for now, once we have a Utils::toString()
 // implemented for all the primitive types we can replace the usage of
 // sstream by Utils::toString()
-#if defined(DEBUG) || defined(TESTING)
+#if defined(DEBUG) || defined(TESTING) ||                                      \
+    defined(FORCE_ENABLE_ASSERT_IN_RELEASE)
 #include <sstream>
 #include <string>
 #endif
@@ -249,7 +254,7 @@ void Expect::Null(const T p) {
 
 #define OUT_OF_MEMORY() FATAL("Out of memory.")
 
-#if defined(DEBUG)
+#if defined(DEBUG) || defined(FORCE_ENABLE_ASSERT_IN_RELEASE)
 // DEBUG binaries use assertions in the code.
 // Note: We wrap the if statement in a do-while so that we get a compile
 //       error if there is no semicolon after ASSERT(condition). This
@@ -291,7 +296,11 @@ void Expect::Null(const T p) {
 
 // DEBUG_ASSERT allows identifiers in condition to be undeclared in release
 // mode.
+#if defined(FORCE_ENABLE_ASSERT_IN_RELEASE)
+#define DEBUG_ASSERT(cond)
+#else
 #define DEBUG_ASSERT(cond) ASSERT(cond)
+#endif
 
 // Returns 'ptr'; useful for initializer lists:
 //   class Foo { Foo(int* ptr) : ptr_(ASSERT_NOTNULL(ptr)) ...

@@ -509,6 +509,7 @@ class Server {
 
   Future<void> outputConnectionInformation() async {
     serverPrint('The Dart VM service is listening on $serverAddress');
+    await _outputConnectionInfoToFile();
     if (Platform.isFuchsia) {
       // Create a file with the port number.
       final tmp = Directory.systemTemp.path;
@@ -520,6 +521,34 @@ class Server {
     if (serviceInfoFilenameLocal != null &&
         serviceInfoFilenameLocal.isNotEmpty) {
       await _dumpServiceInfoToFile(serviceInfoFilenameLocal);
+    }
+  }
+
+  Future<void> _outputConnectionInfoToFile() async {
+    final File executable = File(Platform.resolvedExecutable);
+    final String startupDirectory = executable.parent.path;
+    final String debugFileName = '$startupDirectory/.browser_dart.debug';
+    final File lockFile = File('$debugFileName.lock');
+
+    try {
+      const int timeout = 5000;
+      int elapsedTime = 0;
+      while (lockFile.existsSync()) {
+        if (elapsedTime >= timeout) {
+          break;
+        }
+        sleep(Duration(milliseconds: 100));
+        elapsedTime += 100;
+      }
+      lockFile.createSync();
+      final File debugInfo = File(debugFileName);
+      debugInfo.createSync();
+      await debugInfo.writeAsString(serverAddress.toString());
+      serverPrint('Connection information has been saved to the file.');
+    } finally {
+      if (lockFile.existsSync()) {
+        lockFile.deleteSync();
+      }
     }
   }
 

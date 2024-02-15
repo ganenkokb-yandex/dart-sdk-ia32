@@ -96,6 +96,8 @@ enum Register {
   //     leaf runtime calls.
 };
 
+using LikeABI = Register;
+
 enum FRegister {
   FT0 = 0,
   FT1 = 1,

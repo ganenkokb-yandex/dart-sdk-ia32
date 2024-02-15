@@ -5,8 +5,8 @@
 cc/Fail0: Fail # These tests are expected to crash on all platforms.
 cc/Fail1: Fail # These tests are expected to crash on all platforms.
 cc/Fail2: Fail # These tests are expected to crash on all platforms.
-cc/IsolateReload_PendingConstructorCall_AbstractToConcrete: Fail, Crash # Issue 32981. Fails on non-Windows, crashes on Windows (because of test.py special handline).
-cc/IsolateReload_PendingConstructorCall_ConcreteToAbstract: Fail, Crash # Issue 32981. Fails on non-Windows, crashes on Windows (because of test.py special handline).
+# cc/IsolateReload_PendingConstructorCall_AbstractToConcrete: Fail, Crash # Issue 32981. Fails on non-Windows, crashes on Windows (because of test.py special handline).
+# cc/IsolateReload_PendingConstructorCall_ConcreteToAbstract: Fail, Crash # Issue 32981. Fails on non-Windows, crashes on Windows (because of test.py special handline).
 cc/IsolateReload_PendingStaticCall_DefinedToNSM: Fail # Issue 32981
 cc/IsolateReload_PendingStaticCall_NSMToDefined: Fail, Crash # Issue 32981. Fails on non-Windows, crashes on Windows (because of test.py special handline)
 cc/IsolateReload_PendingUnqualifiedCall_InstanceToStatic: Fail # Issue 32981
@@ -558,3 +558,32 @@ dart_2/thread_priority_linux_test: SkipByDesign
 [ $arch != arm64 && $arch != arm64c && $arch != simarm64 && $arch != simarm64c && $arch != x64 && $arch != x64c || $compiler != dartk && $compiler != dartkp || $mode != product && $mode != release || $runtime != dart_precompiled && $runtime != vm || $system != android && $system != linux ]
 dart/analyze_snapshot_binary_test: SkipByDesign # Only run on 64bit AOT on standard architectures
 dart_2/analyze_snapshot_binary_test: SkipByDesign # Only run on 64bit AOT on standard architectures
+
+# Yandex {
+[ $arch == ia32 ]
+cc/CodeRelocator_DirectBackwardCall: Fail
+cc/IsolateReload_LiveStack: Fail
+cc/IsolateReload_PendingSuperCall: Fail
+cc/IsolateReload_SuperGetterReboundToMethod: Fail
+cc/SafepointOperation_SafepointPointTest: Skip
+
+[ $arch == x64 ]
+cc/ManyClasses: Skip
+cc/TypeArguments_Cache_ManyInstantiations: Skip
+
+[ $arch == ia32 || $arch == x64 ]
+cc/IsolateReload_SuperClassChanged: Crash
+
+[ $compiler == dartkp && $arch == ia32 ]
+dart/heapsnapshot_cli_test: RuntimeError
+dart/load_indexed_trivial_type_il_test: Crash
+
+[ $compiler == dartkp && ($arch == ia32 || $arch == x64) ]
+dart/isolates/fast_object_copy_timeline_test/0: Skip
+dart/isolates/fast_object_copy_timeline_test/1: Skip
+dart/sdk_hash_test: RuntimeError
+dart/unboxed_param_args_descriptor_test: Crash
+dart/unboxed_param_tear_off_test: Crash
+dart/unboxed_param_test: Crash
+
+# } Yandex

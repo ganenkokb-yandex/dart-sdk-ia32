@@ -945,14 +945,14 @@ ErrorPtr Dart::InitializeIsolateGroup(Thread* T,
 
   auto object_store = IG->object_store();
   if (kIsAotRuntime) {
-#if !defined(TARGET_ARCH_IA32)
+#if !defined(TARGET_ARCH_IA32_UNDEFINED)
     ASSERT(object_store->build_generic_method_extractor_code() != Code::null());
     ASSERT(object_store->build_nongeneric_method_extractor_code() !=
            Code::null());
 #endif
   } else {
     FinalizeBuiltinClasses(T);
-#if !defined(TARGET_ARCH_IA32)
+#if !defined(TARGET_ARCH_IA32_UNDEFINED)
     if (IG != Dart::vm_isolate_group()) {
       if (object_store->build_generic_method_extractor_code() != nullptr ||
           object_store->build_nongeneric_method_extractor_code() != nullptr) {
@@ -967,7 +967,7 @@ ErrorPtr Dart::InitializeIsolateGroup(Thread* T,
         }
       }
     }
-#endif  // !defined(TARGET_ARCH_IA32)
+#endif  // !defined(TARGET_ARCH_IA32_UNDEFINED)
   }
 
   if (snapshot_data == nullptr || kernel_buffer != nullptr) {

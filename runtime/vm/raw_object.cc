@@ -676,7 +676,7 @@ intptr_t UntaggedCode::VisitCodePointers(CodePtr raw_obj,
 
   UntaggedCode* obj = raw_obj->untag();
   intptr_t length = Code::PtrOffBits::decode(obj->state_bits_);
-#if defined(TARGET_ARCH_IA32)
+#if defined(TARGET_ARCH_IA32_UNDEFINED)
   // On IA32 only we embed pointers to objects directly in the generated
   // instructions. The variable portion of a Code object describes where to
   // find those pointers for tracing.

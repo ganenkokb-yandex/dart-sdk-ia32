@@ -745,7 +745,7 @@ void Snapshot::GenerateKernel(const char* snapshot_filename,
 }
 
 void Snapshot::GenerateAppJIT(const char* snapshot_filename) {
-#if defined(TARGET_ARCH_IA32)
+#if defined(TARGET_ARCH_IA32_UNDEFINED)
   // Snapshots with code are not supported on IA32.
   uint8_t* isolate_buffer = nullptr;
   intptr_t isolate_size = 0;

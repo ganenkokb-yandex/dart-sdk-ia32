@@ -38,7 +38,7 @@ namespace bin {
 // Only on X64 do we have kernel-service.dart.snapshot available otherwise we
 // need to fall back to the built-in one (if we have it).
 #if defined(EXCLUDE_CFE_AND_KERNEL_PLATFORM) ||                                \
-    (defined(DART_PRECOMPILER) && defined(TARGET_ARCH_X64))
+    (defined(DART_PRECOMPILER) && (defined(TARGET_ARCH_X64) || defined(TARGET_ARCH_IA32)))
 const uint8_t* kernel_service_dill = nullptr;
 const intptr_t kernel_service_dill_size = 0;
 #else

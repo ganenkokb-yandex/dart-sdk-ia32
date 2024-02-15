@@ -170,7 +170,7 @@ TypeTestingStubGenerator::TypeTestingStubGenerator()
 
 CodePtr TypeTestingStubGenerator::OptimizedCodeForType(
     const AbstractType& type) {
-#if !defined(TARGET_ARCH_IA32)
+#if !defined(TARGET_ARCH_IA32_UNDEFINED)
   ASSERT(StubCode::HasBeenInitialized());
 
   if (type.IsTypeParameter()) {
@@ -209,12 +209,12 @@ CodePtr TypeTestingStubGenerator::OptimizedCodeForType(
 #endif  // !defined(DART_PRECOMPILED_RUNTIME)
     }
   }
-#endif  // !defined(TARGET_ARCH_IA32)
+#endif  // !defined(TARGET_ATARGET_ARCH_IA32_UNDEFINEDRCH_IA32)
   return TypeTestingStubGenerator::DefaultCodeForType(
       type, /*lazy_specialize=*/false);
 }
 
-#if !defined(TARGET_ARCH_IA32)
+#if !defined(TARGET_ARCH_IA32_UNDEFINED)
 #if !defined(DART_PRECOMPILED_RUNTIME)
 
 static CodePtr RetryCompilationWithFarBranches(
@@ -1079,7 +1079,7 @@ void TypeTestingStubGenerator::BuildOptimizedTypeParameterArgumentValueCheck(
     __ Comment("%s", buffer.buffer());
   }
 
-  const Register kTypeArgumentsReg =
+  const auto kTypeArgumentsReg =
       type_param.IsClassTypeParameter()
           ? TypeTestABI::kInstantiatorTypeArgumentsReg
           : TypeTestABI::kFunctionTypeArgumentsReg;
@@ -1365,7 +1365,7 @@ void RegisterTypeArgumentsUse(const Function& function,
 
 #endif  // !defined(DART_PRECOMPILED_RUNTIME)
 
-#else  // !defined(TARGET_ARCH_IA32)
+#else  // !defined(TARGET_ARCH_IA32_UNDEFINED)
 
 #if !defined(DART_PRECOMPILED_RUNTIME)
 void RegisterTypeArgumentsUse(const Function& function,
@@ -1377,7 +1377,7 @@ void RegisterTypeArgumentsUse(const Function& function,
 }
 #endif  // !defined(DART_PRECOMPILED_RUNTIME)
 
-#endif  // !defined(TARGET_ARCH_IA32)
+#endif  // !defined(TARGET_ARCH_IA32_UNDEFINED)
 
 #undef __
 

@@ -1620,7 +1620,7 @@ void Object::set_vm_isolate_snapshot_object_table(const Array& table) {
 void Object::MakeUnusedSpaceTraversable(const Object& obj,
                                         intptr_t original_size,
                                         intptr_t used_size) {
-  ASSERT(Thread::Current()->no_safepoint_scope_depth() > 0);
+  DEBUG_ASSERT(Thread::Current()->no_safepoint_scope_depth() > 0);
   ASSERT(!obj.IsNull());
   ASSERT(original_size >= used_size);
   if (original_size > used_size) {
@@ -17965,7 +17965,7 @@ CodePtr Code::FinalizeCode(FlowGraphCompiler* compiler,
   // pages read-only.
   intptr_t pointer_offset_count = assembler->CountPointerOffsets();
   Code& code = Code::ZoneHandle(Code::New(pointer_offset_count));
-#ifdef TARGET_ARCH_IA32
+#ifdef TARGET_ARCH_IA32_UNDEFINED
   assembler->GetSelfHandle() = code.ptr();
 #endif
   Instructions& instrs = Instructions::ZoneHandle(Instructions::New(
@@ -20786,7 +20786,7 @@ bool Instance::IsIdenticalTo(const Instance& other) const {
 }
 
 intptr_t* Instance::NativeFieldsDataAddr() const {
-  ASSERT(Thread::Current()->no_safepoint_scope_depth() > 0);
+  DEBUG_ASSERT(Thread::Current()->no_safepoint_scope_depth() > 0);
   TypedDataPtr native_fields = static_cast<TypedDataPtr>(
       NativeFieldsAddr()->Decompress(untag()->heap_base()));
   if (native_fields == TypedData::null()) {

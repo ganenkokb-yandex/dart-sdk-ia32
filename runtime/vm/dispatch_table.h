@@ -35,6 +35,8 @@ class DispatchTable {
 #elif defined(TARGET_ARCH_RISCV64)
   // Max consecutive sub immediate value
   static constexpr intptr_t kOriginElement = 2048 / 8;
+#elif defined(TARGET_ARCH_IA32)
+  static constexpr intptr_t kOriginElement = 8;
 #else
   static constexpr intptr_t kOriginElement = 0;
 #endif
@@ -54,8 +56,9 @@ class DispatchTable {
 #elif defined(TARGET_ARCH_RISCV64)
   // Origin + Max consecutive add immediate value
   static constexpr intptr_t kLargestSmallOffset = 4096 / 8;
+#elif defined(TARGET_ARCH_IA32)
+  static constexpr intptr_t kLargestSmallOffset = 15;
 #else
-  // No AOT on IA32
   static constexpr intptr_t kLargestSmallOffset = 0;
 #endif
 

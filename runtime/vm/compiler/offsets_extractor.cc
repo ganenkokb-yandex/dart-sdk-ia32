@@ -191,7 +191,7 @@ class OffsetsExtractor : public AllStatic {
 
 int main(int argc, char* argv[]) {
   std::cout << std::hex << PREPROCESSOR_CONDITION << std::endl;
-#if !defined(TARGET_ARCH_IA32) || !defined(DART_PRECOMPILED_RUNTIME)
+#if !defined(TARGET_ARCH_IA32_UNDEFINED) || !defined(DART_PRECOMPILED_RUNTIME)
   dart::OffsetsExtractor::DumpOffsets();
 #endif
   std::cout << PREPROCESSOR_CONDITION_END << std::endl;

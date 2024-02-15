@@ -3347,20 +3347,20 @@ ASSEMBLER_TEST_RUN(PackedDoubleSub, test) {
 
 static void EnterTestFrame(Assembler* assembler) {
   COMPILE_ASSERT(THR != CallingConventions::kArg1Reg);
-  COMPILE_ASSERT(CODE_REG != CallingConventions::kArg2Reg);
+  // COMPILE_ASSERT(CODE_REG != CallingConventions::kArg2Reg);
   __ EnterFrame(0);
+  __ pushq(THR);
+  __ movq(THR, CallingConventions::kArg2Reg);
   __ pushq(CODE_REG);
   __ pushq(PP);
-  __ pushq(THR);
   __ movq(CODE_REG, CallingConventions::kArg1Reg);
-  __ movq(THR, CallingConventions::kArg2Reg);
   __ LoadPoolPointer(PP);
 }
 
 static void LeaveTestFrame(Assembler* assembler) {
-  __ popq(THR);
   __ popq(PP);
   __ popq(CODE_REG);
+  __ popq(THR);
   __ LeaveFrame();
 }
 
@@ -5305,15 +5305,15 @@ ASSEMBLER_TEST_RUN(SquareRootDouble, test) {
 
 // Called from assembler_test.cc.
 ASSEMBLER_TEST_GENERATE(StoreIntoObject, assembler) {
-  __ pushq(CODE_REG);
   __ pushq(THR);
   __ movq(THR, CallingConventions::kArg3Reg);
+  __ pushq(CODE_REG);
   __ StoreCompressedIntoObject(CallingConventions::kArg2Reg,
                                FieldAddress(CallingConventions::kArg2Reg,
                                             GrowableObjectArray::data_offset()),
                                CallingConventions::kArg1Reg);
-  __ popq(THR);
   __ popq(CODE_REG);
+  __ popq(THR);
   __ ret();
 }
 

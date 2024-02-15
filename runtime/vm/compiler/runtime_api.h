@@ -210,7 +210,7 @@ const Field& LookupConvertUtf8DecoderScanFlagsField();
 // Returns the offset in bytes of [field].
 word LookupFieldOffsetInBytes(const Field& field);
 
-#if defined(TARGET_ARCH_IA32)
+#if defined(TARGET_ARCH_IA32_UNDEFINED)
 uword SymbolsPredefinedAddress();
 #endif
 
@@ -387,7 +387,7 @@ double DoubleValue(const dart::Object& a);
 bool CanLoadFromThread(const dart::Object& object, intptr_t* offset = nullptr);
 
 // On IA32 we can embed raw pointers into generated code.
-#if defined(TARGET_ARCH_IA32)
+#if defined(TARGET_ARCH_IA32_UNDEFINED)
 // Returns true if the pointer to the given object can be directly embedded
 // into the generated code (because the object is immortal and immovable).
 bool CanEmbedAsRawPointerInGeneratedCode(const dart::Object& obj);
@@ -395,7 +395,7 @@ bool CanEmbedAsRawPointerInGeneratedCode(const dart::Object& obj);
 // Returns raw pointer value for the given object. Should only be invoked
 // if CanEmbedAsRawPointerInGeneratedCode returns true.
 word ToRawPointer(const dart::Object& a);
-#endif  // defined(TARGET_ARCH_IA32)
+#endif  // defined(TARGET_ARCH_IA32_UNDEFINED)
 
 bool WillAllocateNewOrRememberedObject(intptr_t instance_size);
 
@@ -1214,6 +1214,7 @@ class Thread : public AllStatic {
 
   static word tsan_utils_offset();
   static word jump_to_frame_entry_point_offset();
+  static word memory_pool_offset();
 
   static word AllocateArray_entry_point_offset();
   static word write_barrier_code_offset();

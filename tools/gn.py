@@ -213,12 +213,14 @@ def ToGnArgs(args, mode, arch, target_os, sanitizer, verify_sdk_hash):
         # Tell Crashpad's BUILD files which checkout layout to use.
         gn_args['crashpad_dependencies'] = 'dart'
 
-    if DartTargetCpuForArch(arch) != HostCpuForArch(arch):
-        # Training an app-jit snapshot under a simulator is slow. Use script
-        # snapshots instead.
-        gn_args['dart_snapshot_kind'] = 'kernel'
-    else:
-        gn_args['dart_snapshot_kind'] = 'app-jit'
+    # HACK(ganenkokb): Rework - need x86 == x64
+    # if DartTargetCpuForArch(arch) != HostCpuForArch(arch):
+    #     # Training an app-jit snapshot under a simulator is slow. Use script
+    #     # snapshots instead.
+    #     gn_args['dart_snapshot_kind'] = 'kernel'
+    # else:
+    #     gn_args['dart_snapshot_kind'] = 'app-jit'
+    gn_args['dart_snapshot_kind'] = 'app-jit'
 
     # We only want the fallback root certs in the standalone VM on
     # Linux and Windows.
@@ -430,7 +432,7 @@ def AddCommonGnOptionArgs(parser):
                         help='Disable goma',
                         dest='goma',
                         action='store_false')
-    parser.set_defaults(goma=True)
+    parser.set_defaults(goma=False)
 
     parser.add_argument('--verify-sdk-hash',
                         help='Enable SDK hash checks (default)',
@@ -441,7 +443,7 @@ def AddCommonGnOptionArgs(parser):
                         help='Disable SDK hash checks',
                         dest='verify_sdk_hash',
                         action='store_false')
-    parser.set_defaults(verify_sdk_hash=True)
+    parser.set_defaults(verify_sdk_hash=False)
 
     parser.add_argument('--clang', help='Use Clang', action='store_true')
     parser.add_argument('--no-clang',

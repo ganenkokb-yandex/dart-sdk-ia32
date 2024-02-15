@@ -18,6 +18,7 @@ DEFINE_FLAG(bool, dual_map_code, true, "Dual map jitted code, RW and RX");
 DEFINE_FLAG(bool, dual_map_code, false, "Dual map jitted code, RW and RX");
 #endif  // defined(DUAL_MAPPING_SUPPORTED)
 
+// TODO(ganenkokb): Figure it out - why we need it on ia32. Connected with debugger_ia32.cc
 #if defined(TARGET_ARCH_IA32)
 WritableInstructionsScope::WritableInstructionsScope(uword address,
                                                      intptr_t size)

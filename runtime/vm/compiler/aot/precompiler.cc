@@ -105,7 +105,7 @@ DECLARE_FLAG(bool, print_instruction_stats);
 
 Precompiler* Precompiler::singleton_ = nullptr;
 
-#if defined(DART_PRECOMPILER) && !defined(TARGET_ARCH_IA32)
+#if defined(DART_PRECOMPILER) && !defined(TARGET_ARCH_IA32_UNDEFINED)
 
 // Reasons for retaining a given object.
 struct RetainReasons : public AllStatic {
@@ -955,7 +955,7 @@ void Precompiler::AddCalleesOf(const Function& function, intptr_t gop_offset) {
 #endif  // defined(PRODUCT)
   }
 
-#if defined(TARGET_ARCH_IA32)
+#if defined(TARGET_ARCH_IA32_UNDEFINED)
   FATAL("Callee scanning unimplemented for IA32");
 #endif
 
@@ -4147,6 +4147,6 @@ const char** Obfuscator::SerializeMap(Thread* thread) {
   return result;
 }
 
-#endif  // defined(DART_PRECOMPILER) && !defined(TARGET_ARCH_IA32)
+#endif  // defined(DART_PRECOMPILER) && !defined(TARGET_ARCH_IA32_UNDEFINED)
 
 }  // namespace dart

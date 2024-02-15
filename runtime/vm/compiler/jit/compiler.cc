@@ -90,7 +90,7 @@ DECLARE_FLAG(bool, trace_failed_optimization_attempts);
 
 static void PrecompilationModeHandler(bool value) {
   if (value) {
-#if defined(TARGET_ARCH_IA32)
+#if defined(TARGET_ARCH_IA32_UNDEFINED)
     FATAL("Precompilation not supported on IA32");
 #endif
 
@@ -831,7 +831,7 @@ static ObjectPtr CompileFunctionHelper(CompilationPipeline* pipeline,
 }
 
 ObjectPtr Compiler::CompileFunction(Thread* thread, const Function& function) {
-#if defined(DART_PRECOMPILER) && !defined(TARGET_ARCH_IA32)
+#if defined(DART_PRECOMPILER) && !defined(TARGET_ARCH_IA32_UNDEFINED)
   RELEASE_ASSERT(!FLAG_precompiled_mode);
 #endif
 
