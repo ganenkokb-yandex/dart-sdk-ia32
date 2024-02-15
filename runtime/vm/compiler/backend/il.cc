@@ -43,6 +43,7 @@
 #include "vm/type_testing_stubs.h"
 
 #include "vm/compiler/backend/il_printer.h"
+#include "vm/compiler/like_registers.h"
 
 namespace dart {
 
@@ -941,6 +942,15 @@ LocationSummary* AllocateClosureInstr::MakeLocationSummary(Zone* zone,
 }
 
 void AllocateClosureInstr::EmitNativeCode(FlowGraphCompiler* compiler) {
+#if defined(TARGET_ARCH_IA32)
+  compiler->assembler()->movl(
+      compiler::LikeABI::AllocateClosureABI_kFunctionReg,
+      locs()->in(kFunctionPos).reg());
+#else
+  compiler->assembler()->movq(
+      compiler::LikeABI::AllocateClosureABI_kFunctionReg,
+      locs()->in(kFunctionPos).reg());
+#endif
   const Code& stub = Code::ZoneHandle(
       compiler->zone(),
       compiler->isolate_group()->object_store()->allocate_closure_stub());
@@ -4151,7 +4161,7 @@ LocationSummary* FunctionEntryInstr::MakeLocationSummary(
 }
 
 void FunctionEntryInstr::EmitNativeCode(FlowGraphCompiler* compiler) {
-#if defined(TARGET_ARCH_X64)
+#if defined(TARGET_ARCH_X64) || defined(TARGET_ARCH_IA32)
   // Ensure the start of the monomorphic checked entry is 2-byte aligned (see
   // also Assembler::MonomorphicCheckedEntry()).
   if (__ CodeSize() % 2 == 1) {
@@ -5284,7 +5294,15 @@ LocationSummary* DispatchTableCallInstr::MakeLocationSummary(Zone* zone,
 }
 
 void DispatchTableCallInstr::EmitNativeCode(FlowGraphCompiler* compiler) {
-  ASSERT(locs()->in(0).reg() == DispatchTableNullErrorABI::kClassIdReg);
+  ASSERT(locs()->in(0).reg() ==
+         FindOrigReg(DispatchTableNullErrorABI::kClassIdReg));
+#if defined(TARGET_ARCH_IA32)
+  __ movl(compiler::LikeABI::DispatchTableNullErrorABI_kClassIdReg,
+          locs()->in(0).reg());
+#else
+  __ movq(compiler::LikeABI::DispatchTableNullErrorABI_kClassIdReg,
+          locs()->in(0).reg());
+#endif  // defined(TARGET_ARCH_IA32)
   Array& arguments_descriptor = Array::ZoneHandle();
   if (selector()->requires_args_descriptor) {
     ArgumentsInfo args_info(type_args_len(), ArgumentCount(), ArgumentsSize(),
@@ -5788,6 +5806,27 @@ intptr_t AssertAssignableInstr::statistics_tag() const {
 }
 
 void AssertAssignableInstr::EmitNativeCode(FlowGraphCompiler* compiler) {
+  if (locs()->in(AssertAssignableInstr::kDstTypePos).IsRegister()) {
+    auto reg = locs()->in(AssertAssignableInstr::kDstTypePos).reg();
+#if defined(TARGET_ARCH_IA32)
+    __ movl(compiler::LikeABI::TypeTestABI_kDstTypeReg,
+            locs()->in(AssertAssignableInstr::kDstTypePos).reg());
+#else
+    __ movq(compiler::LikeABI::TypeTestABI_kDstTypeReg,
+            locs()->in(AssertAssignableInstr::kDstTypePos).reg());
+#endif  // defined(TARGET_ARCH_IA32)
+  }
+#if defined(TARGET_ARCH_IA32)
+  __ movl(compiler::LikeABI::TypeTestABI_kInstantiatorTypeArgumentsReg,
+          locs()->in(AssertAssignableInstr::kInstantiatorTAVPos).reg());
+  __ movl(compiler::LikeABI::TypeTestABI_kFunctionTypeArgumentsReg,
+          locs()->in(AssertAssignableInstr::kFunctionTAVPos).reg());
+#else
+  __ movq(compiler::LikeABI::TypeTestABI_kInstantiatorTypeArgumentsReg,
+          locs()->in(AssertAssignableInstr::kInstantiatorTAVPos).reg());
+  __ movq(compiler::LikeABI::TypeTestABI_kFunctionTypeArgumentsReg,
+          locs()->in(AssertAssignableInstr::kFunctionTAVPos).reg());
+#endif  // defined(TARGET_ARCH_IA32)
   compiler->GenerateAssertAssignable(value()->Type(), source(), deopt_id(),
                                      env(), dst_name(), locs());
   ASSERT(locs()->in(kInstancePos).reg() == locs()->out(0).reg());
@@ -5815,6 +5854,29 @@ LocationSummary* AssertSubtypeInstr::MakeLocationSummary(Zone* zone,
 }
 
 void AssertSubtypeInstr::EmitNativeCode(FlowGraphCompiler* compiler) {
+#if defined(TARGET_ARCH_IA32)
+  __ movl(compiler::LikeABI::AssertSubtypeABI_kInstantiatorTypeArgumentsReg,
+          locs()->in(kInstantiatorTAVPos).reg());
+  __ movl(compiler::LikeABI::AssertSubtypeABI_kFunctionTypeArgumentsReg,
+          locs()->in(kFunctionTAVPos).reg());
+  __ movl(compiler::LikeABI::AssertSubtypeABI_kSubTypeReg,
+          locs()->in(kSubTypePos).reg());
+  __ movl(compiler::LikeABI::AssertSubtypeABI_kSuperTypeReg,
+          locs()->in(kSuperTypePos).reg());
+  __ movl(compiler::LikeABI::AssertSubtypeABI_kDstNameReg,
+          locs()->in(kDstNamePos).reg());
+#else
+  __ movq(compiler::LikeABI::AssertSubtypeABI_kInstantiatorTypeArgumentsReg,
+          locs()->in(kInstantiatorTAVPos).reg());
+  __ movq(compiler::LikeABI::AssertSubtypeABI_kFunctionTypeArgumentsReg,
+          locs()->in(kFunctionTAVPos).reg());
+  __ movq(compiler::LikeABI::AssertSubtypeABI_kSubTypeReg,
+          locs()->in(kSubTypePos).reg());
+  __ movq(compiler::LikeABI::AssertSubtypeABI_kSuperTypeReg,
+          locs()->in(kSuperTypePos).reg());
+  __ movq(compiler::LikeABI::AssertSubtypeABI_kDstNameReg,
+          locs()->in(kDstNamePos).reg());
+#endif  // defined(TARGET_ARCH_IA32)
   compiler->GenerateStubCall(source(), StubCode::AssertSubtype(),
                              UntaggedPcDescriptors::kOther, locs(), deopt_id(),
                              env());

@@ -154,6 +154,13 @@ compiler_sources = [
   "stub_code_compiler_x64.cc",
   "write_barrier_elimination.cc",
   "write_barrier_elimination.h",
+  "like_abi.h",
+  "like_registers.cc",
+  "like_registers.h",
+  "like_registers_ia32.h",
+  "like_registers_wrapper.cc",
+  "like_registers_wrapper.h",
+  "like_registers_x64.h",
 ]
 
 compiler_sources_tests = [

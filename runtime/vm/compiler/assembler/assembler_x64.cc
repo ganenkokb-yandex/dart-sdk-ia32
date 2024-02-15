@@ -3,7 +3,7 @@
 // BSD-style license that can be found in the LICENSE file.
 
 #include "vm/globals.h"  // NOLINT
-#if defined(TARGET_ARCH_X64)
+#if defined(TARGET_ARCH_X64) || defined(TARGET_ARCH_IA32)
 
 #define SHOULD_NOT_INCLUDE_RUNTIME
 
@@ -20,6 +20,7 @@ DECLARE_FLAG(bool, precompiled_mode);
 
 namespace compiler {
 
+#if defined(TARGET_ARCH_X64)
 Assembler::Assembler(ObjectPoolBuilder* object_pool_builder,
                      intptr_t far_branch_level)
     : AssemblerBase(object_pool_builder), constant_pool_allowed_(false) {
@@ -42,6 +43,50 @@ void Assembler::call(Label* label) {
   EmitUint8(0xE8);
   EmitLabel(label, kSize);
 }
+#endif  // defined(TARGET_ARCH_X64)
+
+Address Assembler::UpdateAddress(const Address& address, Register reg) {
+  if (address.like_abi_base_ != LikeABI::kNoRegister &&
+      address.like_abi_index_ != LikeABI::kNoRegister) {
+    movq(reg, address.like_abi_base_);
+    MemoryRegisterProvider scoped(this, reg);
+    leaq(reg,
+         address.MakeAddress(reg, scoped.RegReadOnly(address.like_abi_index_)));
+    return Address(reg, 0);
+  } else if (address.like_abi_base_ != LikeABI::kNoRegister) {
+    movq(reg, address.like_abi_base_);
+    return address.MakeAddress(reg, kNoRegister);
+  } else if (address.like_abi_index_ != LikeABI::kNoRegister) {
+    movq(reg, address.like_abi_index_);
+    return address.MakeAddress(kNoRegister, reg);
+  }
+  return address;
+}
+
+Address Assembler::UpdateAddress(const Address& address,
+                                 ScopedAddressReg& reg,
+                                 dart::RegList busy_regs) {
+  if (address.like_abi_base_ != LikeABI::kNoRegister &&
+      address.like_abi_index_ != LikeABI::kNoRegister) {
+    MemoryRegisterProvider scoped(this, busy_regs);
+    reg = std::make_unique<MemoryRegister>(
+        scoped.RegReadOnly(address.like_abi_base_));
+    leaq(*reg, address.MakeAddress(
+                   *reg, scoped.RegReadOnly(address.like_abi_index_)));
+    return Address(*reg, 0);
+  } else if (address.like_abi_base_ != LikeABI::kNoRegister) {
+    MemoryRegisterProvider scoped(this, busy_regs);
+    reg = std::make_unique<MemoryRegister>(
+        scoped.RegReadOnly(address.like_abi_base_));
+    return address.MakeAddress(*reg, kNoRegister);
+  } else if (address.like_abi_index_ != LikeABI::kNoRegister) {
+    MemoryRegisterProvider scoped(this, busy_regs);
+    reg = std::make_unique<MemoryRegister>(
+        scoped.RegReadOnly(address.like_abi_index_));
+    return address.MakeAddress(kNoRegister, *reg);
+  }
+  return address;
+}
 
 void Assembler::LoadNativeEntry(
     Register dst,
@@ -50,8 +95,10 @@ void Assembler::LoadNativeEntry(
   const intptr_t index =
       object_pool_builder().FindNativeFunction(label, patchable);
   LoadWordFromPoolIndex(dst, index);
+  movq(LikeABI::AllocateClosureABI_kFunctionReg, dst);
 }
 
+#if defined(TARGET_ARCH_X64)
 void Assembler::call(const ExternalLabel* label) {
   {  // Encode movq(TMP, Immediate(label->address())), but always as imm64.
     AssemblerBuffer::EnsureCapacity ensured(&buffer_);
@@ -61,6 +108,7 @@ void Assembler::call(const ExternalLabel* label) {
   }
   call(TMP);
 }
+#endif  // defined(TARGET_ARCH_X64)
 
 void Assembler::CallPatchable(const Code& target, CodeEntryKind entry_kind) {
   ASSERT(constant_pool_allowed());
@@ -88,6 +136,7 @@ void Assembler::Call(const Code& target) {
   call(FieldAddress(CODE_REG, target::Code::entry_point_offset()));
 }
 
+#if defined(TARGET_ARCH_X64)
 void Assembler::pushq(Register reg) {
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitRegisterREX(reg, REX_NONE);
@@ -259,10 +308,12 @@ void Assembler::TransitionNativeToGenerated(bool leave_safepoint,
 }
 
 void Assembler::EmitQ(int reg,
-                      const Address& address,
+                      const Address& address_orig,
                       int opcode,
                       int prefix2,
                       int prefix1) {
+  ScopedAddressReg address_reg;
+  auto address = UpdateAddress(address_orig, address_reg, 1 << reg);
   ASSERT(reg <= XMM15);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   if (prefix1 >= 0) {
@@ -277,10 +328,12 @@ void Assembler::EmitQ(int reg,
 }
 
 void Assembler::EmitL(int reg,
-                      const Address& address,
+                      const Address& address_orig,
                       int opcode,
                       int prefix2,
                       int prefix1) {
+  ScopedAddressReg address_reg;
+  auto address = UpdateAddress(address_orig, address_reg, 1 << reg);
   ASSERT(reg <= XMM15);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   if (prefix1 >= 0) {
@@ -312,7 +365,9 @@ void Assembler::EmitW(Register reg,
   EmitOperand(reg & 7, address);
 }
 
-void Assembler::EmitB(int reg, const Address& address, int opcode) {
+void Assembler::EmitB(int reg, const Address& address_orig, int opcode) {
+  ScopedAddressReg address_reg;
+  auto address = UpdateAddress(address_orig, address_reg, 1 << reg);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitOperandREX(reg & ~0x10, address, reg >= 8 ? REX_PREFIX : REX_NONE);
   EmitUint8(opcode);
@@ -383,7 +438,9 @@ void Assembler::movq(Register dst, const Immediate& imm) {
   }
 }
 
-void Assembler::movq(const Address& dst, const Immediate& imm) {
+void Assembler::movq(const Address& dst_orig, const Immediate& imm) {
+  ScopedAddressReg address_reg;
+  auto dst = UpdateAddress(dst_orig, address_reg);
   if (imm.is_int32()) {
     AssemblerBuffer::EnsureCapacity ensured(&buffer_);
     EmitOperandREX(0, dst, REX_W);
@@ -592,7 +649,9 @@ void Assembler::testb(const Address& address, const Immediate& imm) {
   EmitUint8(imm.value() & 0xFF);
 }
 
-void Assembler::testb(const Address& address, Register reg) {
+void Assembler::testb(const Address& address_orig, Register reg) {
+  ScopedAddressReg address_reg;
+  auto address = UpdateAddress(address_orig, address_reg, 1 << reg);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitOperandREX(reg, address, REX_NONE);
   EmitUint8(0x84);
@@ -662,8 +721,10 @@ void Assembler::AluL(uint8_t modrm_opcode, Register dst, const Immediate& imm) {
 }
 
 void Assembler::AluB(uint8_t modrm_opcode,
-                     const Address& dst,
+                     const Address& dst_orig,
                      const Immediate& imm) {
+  ScopedAddressReg address_reg;
+  auto dst = UpdateAddress(dst_orig, address_reg);
   ASSERT(imm.is_uint8() || imm.is_int8());
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitOperandREX(modrm_opcode, dst, REX_NONE);
@@ -733,15 +794,17 @@ void Assembler::AluQ(uint8_t modrm_opcode,
 
 void Assembler::AluQ(uint8_t modrm_opcode,
                      uint8_t opcode,
-                     const Address& dst,
+                     const Address& dst_orig,
                      const Immediate& imm) {
   if (imm.is_int32()) {
+    ScopedAddressReg address_reg;
+    auto dst = UpdateAddress(dst_orig, address_reg);
     AssemblerBuffer::EnsureCapacity ensured(&buffer_);
     EmitOperandREX(modrm_opcode, dst, REX_W);
     EmitComplex(modrm_opcode, dst, imm);
   } else {
     movq(TMP, imm);
-    EmitQ(TMP, dst, opcode);
+    EmitQ(TMP, dst_orig, opcode);
   }
 }
 
@@ -829,7 +892,11 @@ void Assembler::EmitUnaryQ(const Address& address, int opcode, int modrm_code) {
   EmitOperand(modrm_code, operand);
 }
 
-void Assembler::EmitUnaryL(const Address& address, int opcode, int modrm_code) {
+void Assembler::EmitUnaryL(const Address& address_orig,
+                           int opcode,
+                           int modrm_code) {
+  ScopedAddressReg address_reg;
+  auto address = UpdateAddress(address_orig, address_reg);
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   Operand operand(address);
   EmitOperandREX(modrm_code, operand, REX_NONE);
@@ -1055,7 +1122,9 @@ void Assembler::j(Condition condition, Label* label, JumpDistance distance) {
   }
 }
 
-void Assembler::J(Condition condition, const Code& target, Register pp) {
+void Assembler::J(Condition condition,
+                  const Code& target,
+                  dart::compiler::LikeABI pp) {
   Label no_jump;
   // Negate condition.
   j(static_cast<Condition>(condition ^ 1), &no_jump, kNearJump);
@@ -1096,7 +1165,7 @@ void Assembler::jmp(const ExternalLabel* label) {
   jmp(TMP);
 }
 
-void Assembler::JmpPatchable(const Code& target, Register pp) {
+void Assembler::JmpPatchable(const Code& target, dart::compiler::LikeABI pp) {
   ASSERT((pp != PP) || constant_pool_allowed());
   const intptr_t idx = object_pool_builder().AddObject(
       ToObject(target), ObjectPoolBuilderEntry::kPatchable);
@@ -1106,7 +1175,7 @@ void Assembler::JmpPatchable(const Code& target, Register pp) {
   jmp(TMP);
 }
 
-void Assembler::Jmp(const Code& target, Register pp) {
+void Assembler::Jmp(const Code& target, dart::compiler::LikeABI pp) {
   ASSERT((pp != PP) || constant_pool_allowed());
   const intptr_t idx = object_pool_builder().FindObject(
       ToObject(target), ObjectPoolBuilderEntry::kNotPatchable);
@@ -1303,6 +1372,7 @@ void Assembler::Drop(intptr_t stack_elements, Register tmp) {
   }
   addq(RSP, Immediate(stack_elements * target::kWordSize));
 }
+#endif  // defined(TARGET_ARCH_X64)
 
 bool Assembler::CanLoadFromObjectPool(const Object& object) const {
   ASSERT(IsOriginalObject(object));
@@ -1317,14 +1387,16 @@ bool Assembler::CanLoadFromObjectPool(const Object& object) const {
 
 void Assembler::LoadWordFromPoolIndex(Register dst, intptr_t idx) {
   ASSERT(constant_pool_allowed());
-  ASSERT(dst != PP);
+  // ASSERT(dst != PP);
   // PP is tagged on X64.
   const int32_t offset =
       target::ObjectPool::element_offset(idx) - kHeapObjectTag;
   // This sequence must be decodable by code_patcher_x64.cc.
-  movq(dst, Address(PP, offset));
+  MemoryRegisterProvider scoped(this);
+  movq(dst, Address(scoped.Reg(PP, (dst != RCX) ? RCX : RAX), offset));
 }
 
+#if defined(TARGET_ARCH_X64)
 void Assembler::LoadInt64FromBoxOrSmi(Register result, Register value) {
   compiler::Label done;
 #if !defined(DART_COMPRESSED_POINTERS)
@@ -1358,6 +1430,7 @@ void Assembler::LoadIsolate(Register dst) {
 void Assembler::LoadIsolateGroup(Register dst) {
   movq(dst, Address(THR, target::Thread::isolate_group_offset()));
 }
+#endif  // defined(TARGET_ARCH_X64)
 
 void Assembler::LoadDispatchTable(Register dst) {
   movq(dst, Address(THR, target::Thread::dispatch_table_array_offset()));
@@ -1398,6 +1471,9 @@ void Assembler::LoadUniqueObject(Register dst, const Object& object) {
 }
 
 void Assembler::StoreObject(const Address& dst, const Object& object) {
+#if defined(TARGET_ARCH_IA32)
+  REPLACE_TMP_REGS_WITH_MEMORY_1(TMP);
+#endif
   ASSERT(IsOriginalObject(object));
 
   intptr_t offset_from_thread;
@@ -1413,6 +1489,9 @@ void Assembler::StoreObject(const Address& dst, const Object& object) {
 }
 
 void Assembler::PushObject(const Object& object) {
+#if defined(TARGET_ARCH_IA32)
+  REPLACE_TMP_REGS_WITH_MEMORY_1(TMP);
+#endif
   ASSERT(IsOriginalObject(object));
 
   intptr_t offset_from_thread;
@@ -1443,6 +1522,7 @@ void Assembler::CompareObject(Register reg, const Object& object) {
   }
 }
 
+#if defined(TARGET_ARCH_X64)
 void Assembler::LoadImmediate(Register reg, const Immediate& imm) {
   if (imm.value() == 0) {
     xorl(reg, reg);
@@ -1500,7 +1580,9 @@ void Assembler::LoadCompressed(Register dest, const Address& slot) {
 #endif
 }
 
-void Assembler::LoadCompressedSmi(Register dest, const Address& slot) {
+void Assembler::LoadCompressedSmi(Register dest, const Address& slot_orig) {
+  ScopedAddressReg address_reg;
+  auto slot = UpdateAddress(slot_orig, address_reg);
 #if !defined(DART_COMPRESSED_POINTERS)
   movq(dest, slot);
 #else
@@ -1513,6 +1595,7 @@ void Assembler::LoadCompressedSmi(Register dest, const Address& slot) {
   Bind(&done);
 #endif
 }
+#endif  // defined(TARGET_ARCH_X64)
 
 void Assembler::StoreIntoObject(Register object,
                                 const Address& dest,
@@ -1559,13 +1642,21 @@ void Assembler::StoreBarrier(Register object,
   if (can_be_smi == kValueCanBeSmi) {
     BranchIfSmi(value, &done, kNearJump);
   }
+  Register TMP =
+      FindFreeReg(MakeRegList(object, value), MakeRegList(RAX, RBX, RCX, RDX));
+  pushq(TMP);
   movb(ByteRegisterOf(TMP),
        FieldAddress(object, target::Object::tags_offset()));
   shrl(TMP, Immediate(target::UntaggedObject::kBarrierOverlapShift));
   andl(TMP, Address(THR, target::Thread::write_barrier_mask_offset()));
   testb(FieldAddress(value, target::Object::tags_offset()), TMP);
+  popq(TMP);
   j(ZERO, &done, kNearJump);
 
+  movq(LikeABI::kWriteBarrierValueReg, value);
+  generate_invoke_write_barrier_wrapper_(object);
+
+#if 0
   Register object_for_call = object;
   if (value != kWriteBarrierValueReg) {
     // Unlikely. Only non-graph intrinsics.
@@ -1587,9 +1678,11 @@ void Assembler::StoreBarrier(Register object,
     }
     popq(kWriteBarrierValueReg);
   }
+#endif
   Bind(&done);
 }
 
+#if defined(TARGET_ARCH_X64)
 void Assembler::StoreIntoArray(Register object,
                                Register slot,
                                Register value,
@@ -1597,6 +1690,7 @@ void Assembler::StoreIntoArray(Register object,
   movq(Address(slot, 0), value);
   StoreIntoArrayBarrier(object, slot, value, can_be_smi);
 }
+#endif  // defined(TARGET_ARCH_X64)
 
 void Assembler::StoreCompressedIntoArray(Register object,
                                          Register slot,
@@ -1625,13 +1719,18 @@ void Assembler::StoreIntoArrayBarrier(Register object,
   if (can_be_smi == kValueCanBeSmi) {
     BranchIfSmi(value, &done, kNearJump);
   }
+  Register TMP = FindFreeReg(MakeRegList(object, slot, value),
+                             MakeRegList(RAX, RBX, RCX, RDX));
+  pushq(TMP);
   movb(ByteRegisterOf(TMP),
        FieldAddress(object, target::Object::tags_offset()));
   shrl(TMP, Immediate(target::UntaggedObject::kBarrierOverlapShift));
   andl(TMP, Address(THR, target::Thread::write_barrier_mask_offset()));
   testb(FieldAddress(value, target::Object::tags_offset()), TMP);
+  popq(TMP);
   j(ZERO, &done, kNearJump);
 
+#if 0
   if ((object != kWriteBarrierObjectReg) || (value != kWriteBarrierValueReg) ||
       (slot != kWriteBarrierSlotReg)) {
     // Spill and shuffle unimplemented. Currently StoreIntoArray is only used
@@ -1639,12 +1738,17 @@ void Assembler::StoreIntoArrayBarrier(Register object,
     // allocator.
     UNIMPLEMENTED();
   }
+#endif
 
+  movq(LikeABI::kWriteBarrierObjectReg, object);
+  movq(LikeABI::kWriteBarrierValueReg, value);
+  movq(LikeABI::kWriteBarrierSlotReg, slot);
   generate_invoke_array_write_barrier_();
 
   Bind(&done);
 }
 
+#if defined(TARGET_ARCH_X64)
 void Assembler::StoreIntoObjectNoBarrier(Register object,
                                          const Address& dest,
                                          Register value,
@@ -1702,11 +1806,15 @@ void Assembler::StoreCompressedIntoObjectNoBarrier(Register object,
 #endif  // defined(DEBUG)
   // No store buffer update.
 }
+#endif  // defined(TARGET_ARCH_X64)
 
 void Assembler::StoreIntoObjectNoBarrier(Register object,
                                          const Address& dest,
                                          const Object& value,
                                          MemoryOrder memory_order) {
+#if defined(TARGET_ARCH_IA32)
+  REPLACE_TMP_REGS_WITH_MEMORY_1(TMP);
+#endif
   if (memory_order == kRelease) {
     LoadObject(TMP, value);
     StoreIntoObjectNoBarrier(object, dest, TMP, memory_order);
@@ -1715,6 +1823,7 @@ void Assembler::StoreIntoObjectNoBarrier(Register object,
   }
 }
 
+#if defined(TARGET_ARCH_X64)
 void Assembler::StoreCompressedIntoObjectNoBarrier(Register object,
                                                    const Address& dest,
                                                    const Object& value,
@@ -1888,6 +1997,7 @@ void Assembler::EmitEntryFrameVerification() {
   Bind(&ok);
 #endif
 }
+#endif  // defined(TARGET_ARCH_X64)
 
 void Assembler::PushRegisters(const RegisterSet& register_set) {
   const intptr_t xmm_regs_count = register_set.FpuRegisterCount();
@@ -1914,6 +2024,12 @@ void Assembler::PushRegisters(const RegisterSet& register_set) {
       pushq(reg);
     }
   }
+
+  for (auto it = register_set.like_abi_registers_.cbegin();
+       it != register_set.like_abi_registers_.cend(); ++it) {
+    LikeABIRegisters abi_regs(this);
+    abi_regs.Push(*it);
+  }
 }
 
 void Assembler::PopRegisters(const RegisterSet& register_set) {
@@ -1938,8 +2054,15 @@ void Assembler::PopRegisters(const RegisterSet& register_set) {
     ASSERT(offset == (xmm_regs_count * kFpuRegisterSize));
     AddImmediate(RSP, Immediate(offset));
   }
+
+  for (auto it = register_set.like_abi_registers_.crbegin();
+       it != register_set.like_abi_registers_.crend(); ++it) {
+    LikeABIRegisters abi_regs(this);
+    abi_regs.Pop(*it);
+  }
 }
 
+#if defined(TARGET_ARCH_X64)
 void Assembler::PushRegistersInOrder(std::initializer_list<Register> regs) {
   for (Register reg : regs) {
     PushRegister(reg);
@@ -1998,8 +2121,8 @@ LeafRuntimeScope::LeafRuntimeScope(Assembler* assembler,
   } else {
     // These registers must always be preserved.
     ASSERT(IsCalleeSavedRegister(THR));
-    ASSERT(IsCalleeSavedRegister(PP));
-    ASSERT(IsCalleeSavedRegister(CODE_REG));
+    // ASSERT(IsCalleeSavedRegister(PP));
+    // ASSERT(IsCalleeSavedRegister(CODE_REG));
   }
 
   __ ReserveAlignedFrameSpace(frame_size);
@@ -2077,26 +2200,28 @@ void Assembler::TsanStoreRelease(Address addr) {
   rt.Call(kTsanStoreReleaseRuntimeEntry, /*argument_count=*/1);
 }
 #endif
+#endif  // defined(TARGET_ARCH_X64)
 
 void Assembler::RestoreCodePointer() {
   movq(CODE_REG,
        Address(RBP, target::frame_layout.code_from_fp * target::kWordSize));
 }
 
-void Assembler::LoadPoolPointer(Register pp) {
+void Assembler::LoadPoolPointer(dart::compiler::LikeABI pp) {
   // Load new pool pointer.
   CheckCodePointer();
   movq(pp, FieldAddress(CODE_REG, target::Code::object_pool_offset()));
   set_constant_pool_allowed(pp == PP);
 }
 
-void Assembler::EnterDartFrame(intptr_t frame_size, Register new_pp) {
+void Assembler::EnterDartFrame(intptr_t frame_size,
+                               dart::compiler::LikeABI new_pp) {
   ASSERT(!constant_pool_allowed());
   EnterFrame(0);
   if (!FLAG_precompiled_mode) {
     pushq(CODE_REG);
     pushq(PP);
-    if (new_pp == kNoRegister) {
+    if (new_pp == dart::compiler::LikeABI::kNoRegister) {
       LoadPoolPointer(PP);
     } else {
       movq(PP, new_pp);
@@ -2119,7 +2244,7 @@ void Assembler::LeaveDartFrame() {
 }
 
 void Assembler::CheckCodePointer() {
-#ifdef DEBUG
+#if defined(DEBUG) && defined(TARGET_ARCH_X64)
   if (!FLAG_check_code_pointer) {
     return;
   }
@@ -2167,8 +2292,9 @@ void Assembler::EnterOsrFrame(intptr_t extra_size) {
   }
 }
 
+#if defined(TARGET_ARCH_X64)
 void Assembler::EnterStubFrame() {
-  EnterDartFrame(0, kNoRegister);
+  EnterDartFrame(0, dart::compiler::LikeABI::kNoRegister);
 }
 
 void Assembler::LeaveStubFrame() {
@@ -2178,7 +2304,7 @@ void Assembler::LeaveStubFrame() {
 void Assembler::EnterCFrame(intptr_t frame_space) {
   // Already saved.
   COMPILE_ASSERT(IsCalleeSavedRegister(THR));
-  COMPILE_ASSERT(IsCalleeSavedRegister(PP));
+  // COMPILE_ASSERT(IsCalleeSavedRegister(PP));
 
   EnterFrame(0);
   ReserveAlignedFrameSpace(frame_space);
@@ -2226,19 +2352,27 @@ void Assembler::MonomorphicCheckedEntryJIT() {
                target::Instructions::kPolymorphicEntryOffsetJIT);
   ASSERT(((CodeSize() - start) & kSmiTagMask) == kSmiTag);
 }
+#endif  // defined(TARGET_ARCH_X64)
 
 // RBX - input: class id smi
 // RDX - input: receiver object
 void Assembler::MonomorphicCheckedEntryAOT() {
+#if defined(TARGET_ARCH_IA32)
+  auto RBX = ECX;
+  auto RDX = EBX;
+#endif
+
   has_monomorphic_entry_ = true;
   intptr_t start = CodeSize();
   Label have_cid, miss;
   Bind(&miss);
   jmp(Address(THR, target::Thread::switchable_call_miss_entry_offset()));
 
+#if defined(TARGET_ARCH_X64)
   // Ensure the monomorphic entry is 2-byte aligned (so GC can see them if we
   // store them in ICData / MegamorphicCache arrays)
   nop(1);
+#endif
 
   Comment("MonomorphicCheckedEntry");
   ASSERT_EQUAL(CodeSize() - start,
@@ -2262,6 +2396,7 @@ void Assembler::MonomorphicCheckedEntryAOT() {
   ASSERT(((CodeSize() - start) & kSmiTagMask) == kSmiTag);
 }
 
+#if defined(TARGET_ARCH_X64)
 void Assembler::BranchOnMonomorphicCheckedEntryJIT(Label* label) {
   has_monomorphic_entry_ = true;
   while (CodeSize() < target::Instructions::kMonomorphicEntryOffsetJIT) {
@@ -2438,6 +2573,7 @@ void Assembler::CopyMemoryWords(Register src,
   j(NOT_ZERO, &loop, kNearJump);
   Bind(&done);
 }
+#endif  // defined(TARGET_ARCH_X64)
 
 void Assembler::GenerateUnRelocatedPcRelativeCall(intptr_t offset_into_target) {
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
@@ -2460,6 +2596,7 @@ void Assembler::GenerateUnRelocatedPcRelativeTailCall(
   pattern.set_distance(offset_into_target);
 }
 
+#if defined(TARGET_ARCH_X64)
 void Assembler::Align(int alignment, intptr_t offset) {
   ASSERT(Utils::IsPowerOfTwo(alignment));
   intptr_t pos = offset + buffer_.GetPosition();
@@ -2479,6 +2616,8 @@ void Assembler::Align(int alignment, intptr_t offset) {
 }
 
 void Assembler::EmitOperand(int rm, const Operand& operand) {
+  RELEASE_ASSERT(operand.like_abi_base_ == LikeABI::kNoRegister);
+  RELEASE_ASSERT(operand.like_abi_index_ == LikeABI::kNoRegister);
   ASSERT(rm >= 0 && rm < 8);
   const intptr_t length = operand.length_;
   ASSERT(length > 0);
@@ -2586,6 +2725,7 @@ void Assembler::EmitGenericShift(bool wide,
   EmitUint8(0xD3);
   EmitOperand(rm, Operand(operand));
 }
+#endif  // defined(TARGET_ARCH_X64)
 
 void Assembler::ExtractClassIdFromTags(Register result, Register tags) {
   ASSERT(target::UntaggedObject::kClassIdTagPos == 12);
@@ -2605,6 +2745,7 @@ void Assembler::ExtractInstanceSizeFromTags(Register result, Register tags) {
                          << target::ObjectAlignment::kObjectAlignmentLog2));
 }
 
+#if defined(TARGET_ARCH_X64)
 void Assembler::LoadClassId(Register result, Register object) {
   ASSERT(target::UntaggedObject::kClassIdTagPos == 12);
   ASSERT(target::UntaggedObject::kClassIdTagSize == 20);
@@ -2651,6 +2792,7 @@ void Assembler::SmiUntagOrCheckClass(Register object,
   UNREACHABLE();
 #endif
 }
+#endif  // defined(TARGET_ARCH_X64)
 
 void Assembler::LoadClassIdMayBeSmi(Register result, Register object) {
   Label smi;
@@ -2677,6 +2819,7 @@ void Assembler::LoadClassIdMayBeSmi(Register result, Register object) {
   }
 }
 
+#if defined(TARGET_ARCH_X64)
 void Assembler::LoadTaggedClassIdMayBeSmi(Register result, Register object) {
   Label smi;
 
@@ -2772,8 +2915,9 @@ void Assembler::RangeCheck(Register value,
   cmpq(to_check, Immediate(high - low));
   j(cc, target);
 }
+#endif  // defined(TARGET_ARCH_X64)
 
 }  // namespace compiler
 }  // namespace dart
 
-#endif  // defined(TARGET_ARCH_X64)
+#endif  // defined(TARGET_ARCH_X64) || defined(TARGET_ARCH_IA32)

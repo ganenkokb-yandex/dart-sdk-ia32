@@ -969,11 +969,8 @@ executable("run_vm_tests") {
     "..:dart_config",
     "..:dart_os_config",
     "..:dart_maybe_product_config",
+    "..:dart_precompiler_config",
   ]
-
-  if (dart_target_arch != "ia32" && dart_target_arch != "x86") {
-    configs += [ "..:dart_precompiler_config" ]
-  }
 
   deps = [
     ":crashpad",
@@ -1110,7 +1107,7 @@ shared_library("ffi_test_functions") {
 
 # DartLibFuzzer only "exists" for restricted configurations.
 if (defined(is_linux) && is_linux && defined(is_asan) && is_asan &&
-    (dart_target_arch == "x64" || dart_target_arch == "arm64")) {
+    (dart_target_arch == "x64" || dart_target_arch == "arm64" || dart_target_arch == "ia32")) {
   dart_executable("dart_libfuzzer") {
     extra_ldflags = [ "-fsanitize=address,fuzzer" ]
     extra_deps = [ "..:libdart_libfuzzer" ]

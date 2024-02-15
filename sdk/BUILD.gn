@@ -343,6 +343,14 @@ copy("copy_gen_snapshot_exe") {
   outputs = [
     "$root_out_dir/$dart_sdk_output/bin/utils/gen_snapshot${executable_suffix}",
   ]
+  # Yandex {
+  if (is_mac) {
+    outputs = []
+    outputs = [
+      "$root_out_dir/$dart_sdk_output/bin/utils/gen_snapshot_$target_cpu${executable_suffix}",
+    ]
+  }
+  # }
 }
 
 if (_has_dot_sym) {
@@ -667,6 +675,12 @@ action("write_version_file") {
     "--output",
     rebase_path(output),
   ]
+
+  # Yandex {
+  inputs -= [
+    "$default_git_folder/logs/HEAD",
+  ]
+  # } Yandex
 }
 
 # This rule writes the revision file.
@@ -680,6 +694,12 @@ action("write_revision_file") {
     "--output",
     rebase_path(output),
   ]
+
+  # Yandex {
+  inputs -= [
+    "$default_git_folder/logs/HEAD",
+  ]
+  # } Yandex
 }
 
 # This rule copies the README file.
@@ -707,6 +727,12 @@ action("write_dartdoc_options") {
     "--output",
     rebase_path(output),
   ]
+
+  # Yandex {
+  inputs -= [
+    "$default_git_folder/logs/HEAD",
+  ]
+  # } Yandex
 }
 
 # This rule copies the API readme file to lib/
@@ -735,14 +761,15 @@ group("create_common_sdk") {
     ":write_dartdoc_options",
     ":write_revision_file",
     ":write_version_file",
+    ":group_dart2native",
   ]
 
   # We do not support AOT on ia32 and should therefore not add the
   # dart native compilation files since there is no AOT compiler/runtime
   # available.
-  if (dart_target_arch != "ia32" && dart_target_arch != "x86") {
-    public_deps += [ ":group_dart2native" ]
-  }
+  # if (dart_target_arch != "ia32" && dart_target_arch != "x86") {
+  #   public_deps += [ ":group_dart2native" ]
+  # }
 }
 
 # Parts specific to the platform SDK.

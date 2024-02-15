@@ -296,7 +296,7 @@ FfiCallbackMetadata::Trampoline FfiCallbackMetadata::CreateSyncFfiCallbackImpl(
     Metadata** list_head) {
   TrampolineType trampoline_type = TrampolineType::kSync;
 
-#if defined(TARGET_ARCH_IA32)
+#if defined(TARGET_ARCH_IA32_UNDEFINED)
   // On ia32, store the stack delta that we need to use when returning.
   const intptr_t stack_return_delta =
       function.FfiCSignatureReturnsStruct() && CallingConventions::kUsesRet4

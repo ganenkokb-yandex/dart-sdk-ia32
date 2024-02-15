@@ -50,7 +50,9 @@ void Assert::Fail(const char* format, ...) const {
   va_end(arguments);
 
   // Abort right away.
+#if !defined(FORCE_ENABLE_ASSERT_IN_RELEASE)
   Dart_DumpNativeStackTrace(nullptr);
+#endif
   Dart_PrepareToAbort();
   abort();
 }

@@ -13,7 +13,9 @@
 #include "platform/globals.h"
 #include "platform/utils.h"
 
+#include "vm/compiler/like_abi.h"
 #include "vm/constants_base.h"
+#include "vm/globals.h"
 
 namespace dart {
 
@@ -28,6 +30,14 @@ enum Register {
   EBP = 5,  // FP
   ESI = 6,  // THR
   EDI = 7,
+  RAX = EAX,
+  RCX = ECX,
+  RDX = EDX,
+  RBX = EBX,
+  RSP = ESP,
+  RBP = EBP,
+  RSI = ESI,
+  RDI = EDI,
   kNumberOfCpuRegisters = 8,
   kNoRegister = -1,  // Signals an illegal register.
 };
@@ -46,6 +56,44 @@ enum ByteRegister {
   kNumberOfByteRegisters = 8,
   kNoByteRegister = -1  // Signals an illegal register.
 };
+
+inline constexpr Register FindOrigReg(dart::compiler::LikeABI like_abi) {
+  switch (like_abi) {
+    case dart::compiler::LikeABI::kWriteBarrierObjectReg:
+      return Register::EDX;
+    case dart::compiler::LikeABI::kWriteBarrierValueReg:
+      return Register::EBX;
+    case dart::compiler::LikeABI::kWriteBarrierSlotReg:
+      return Register::EDI;
+    case dart::compiler::LikeABI::TypeTestABI_kDstTypeReg:
+      return Register::EBX;
+    case dart::compiler::LikeABI::TypeTestABI_kInstantiatorTypeArgumentsReg:
+      return Register::EDX;
+    case dart::compiler::LikeABI::TypeTestABI_kFunctionTypeArgumentsReg:
+      return Register::ECX;
+    case dart::compiler::LikeABI::TTABI_kSubtypeTestCache:
+      return Register::EDI;
+    case dart::compiler::LikeABI::AllocateClosureABI_kFunctionReg:
+      return Register::EBX;
+    case dart::compiler::LikeABI::AssertSubtypeABI_kSubTypeReg:
+      return Register::EAX;
+    case dart::compiler::LikeABI::AssertSubtypeABI_kSuperTypeReg:
+      return Register::EBX;
+    case dart::compiler::LikeABI::AssertSubtypeABI_kInstantiatorTypeArgumentsReg:
+      return Register::EDX;
+    case dart::compiler::LikeABI::AssertSubtypeABI_kFunctionTypeArgumentsReg:
+      return Register::ECX;
+    case dart::compiler::LikeABI::AssertSubtypeABI_kDstNameReg:
+      return Register::EDI;
+    case dart::compiler::LikeABI::DispatchTableNullErrorABI_kClassIdReg:
+      return Register::EAX;
+    case dart::compiler::LikeABI::AllocateObjectABI_kTypeArgumentsReg:
+      return Register::EDX;
+    default:
+      RELEASE_ASSERT(false);
+      return kNoRegister;
+  }
+}
 
 inline ByteRegister ByteRegisterOf(Register reg) {
   // This only works for EAX, ECX, EDX, EBX.
@@ -81,29 +129,61 @@ extern const char* const cpu_reg_abi_names[kNumberOfCpuRegisters];
 extern const char* const cpu_reg_byte_names[kNumberOfByteRegisters];
 extern const char* const fpu_reg_names[kNumberOfXmmRegisters];
 
+enum RexBits {
+  REX_NONE = 0,
+  REX_B = 1 << 0,
+  REX_X = 1 << 1,
+  REX_R = 1 << 2,
+  REX_W = 1 << 3,
+  REX_PREFIX = 1 << 6
+};
+
 // Register aliases.
+// TODO(xafster): Remove TMP
 const Register TMP = kNoRegister;   // No scratch register used by assembler.
 const Register TMP2 = kNoRegister;  // No second assembler scratch register.
-const Register CODE_REG = EDI;
+#if USE_LIKE_ABI_SEPARATED
+const dart::compiler::LikeABI PP = dart::compiler::LikeABI::PP;
+#else
+const dart::compiler::LikeABI PP = dart::compiler::LikeABI::kNoRegister;
+#endif
 // Set when calling Dart functions in JIT mode, used by LazyCompileStub.
 const Register FUNCTION_REG = EAX;
-const Register PP = kNoRegister;     // No object pool pointer.
 const Register SPREG = ESP;          // Stack pointer register.
 const Register FPREG = EBP;          // Frame pointer register.
+const Register RECEIVER_REG = EBX;
 const Register IC_DATA_REG = ECX;    // ICData/MegamorphicCache register.
 const Register ARGS_DESC_REG = EDX;  // Arguments descriptor register.
+#if USE_LIKE_ABI_SEPARATED
+const dart::compiler::LikeABI CODE_REG = dart::compiler::LikeABI::CODE;
+#else
+const dart::compiler::LikeABI CODE_REG = dart::compiler::LikeABI::R12;
+#endif
 const Register THR = ESI;            // Caches current thread in generated code.
 const Register CALLEE_SAVED_TEMP = EBX;
 const Register CALLEE_SAVED_TEMP2 = EDI;
+const Register RAX_FOR_SCOPED = EAX;
+const Register RCX_FOR_SCOPED = ECX;
+const Register RDX_FOR_SCOPED = EDX;
+const Register RBX_FOR_SCOPED = EBX;
 
 // ABI for catch-clause entry point.
 const Register kExceptionObjectReg = EAX;
 const Register kStackTraceObjectReg = EDX;
 
 // ABI for write barrier stub.
-const Register kWriteBarrierObjectReg = EDX;
-const Register kWriteBarrierValueReg = EBX;
-const Register kWriteBarrierSlotReg = EDI;
+#if USE_LIKE_ABI_SEPARATED
+const dart::compiler::LikeABI kWriteBarrierObjectReg =
+    dart::compiler::LikeABI::kWriteBarrierObjectReg;
+const dart::compiler::LikeABI kWriteBarrierValueReg =
+    dart::compiler::LikeABI::kWriteBarrierValueReg;
+const dart::compiler::LikeABI kWriteBarrierSlotReg =
+    dart::compiler::LikeABI::kWriteBarrierSlotReg;
+#else
+const dart::compiler::LikeABI kWriteBarrierObjectReg = dart::compiler::LikeABI::EDX;
+const dart::compiler::LikeABI kWriteBarrierValueReg = dart::compiler::LikeABI::EBX;
+const dart::compiler::LikeABI kWriteBarrierSlotReg = dart::compiler::LikeABI::EDI;
+#endif
 
 // Common ABI for shared slow path stubs.
 struct SharedSlowPathStubABI {
@@ -129,38 +209,71 @@ struct InstantiateTAVInternalRegs {
   static constexpr intptr_t kSavedRegisters = 0;
 };
 
+// Registers in addition to those listed in TypeTestABI used inside the
+// implementation of type testing stubs that are _not_ preserved.
+struct TTSInternalRegs {
+  static const Register kInstanceTypeArgumentsReg = EBX;
+  // static const Register kScratchReg = R8;
+  static const Register kScratchReg = EDI;
+  // static const Register kSubTypeArgumentReg = R10;
+  static const Register kSubTypeArgumentReg = EDX;
+  // static const Register kSuperTypeArgumentReg = R13;
+  static const Register kSuperTypeArgumentReg = ECX;
+
+  // Must be pushed/popped whenever generic type arguments are being checked as
+  // they overlap with registers in TypeTestABI.
+  static const intptr_t kSavedTypeArgumentRegisters = 0;
+
+  static const intptr_t kInternalRegisters =
+      ((1 << kInstanceTypeArgumentsReg) | (1 << kScratchReg) |
+       (1 << kSubTypeArgumentReg) | (1 << kSuperTypeArgumentReg)) &
+      ~kSavedTypeArgumentRegisters;
+};
+
 // Calling convention when calling SubtypeTestCacheStub.
 // Although ia32 uses a stack-based calling convention, we keep the same
 // 'TypeTestABI' name for symmetry with other architectures with a proper ABI.
 // Note that ia32 has no support for type testing stubs.
 struct TypeTestABI {
   static constexpr Register kInstanceReg = EAX;
-  static constexpr Register kDstTypeReg = EBX;
-  static constexpr Register kInstantiatorTypeArgumentsReg = EDX;
-  static constexpr Register kFunctionTypeArgumentsReg = ECX;
-  static constexpr Register kSubtypeTestCacheReg =
-      EDI;  // On ia32 we don't use CODE_REG.
+#if USE_LIKE_ABI_SEPARATED
+  static constexpr dart::compiler::LikeABI kDstTypeReg =
+      dart::compiler::LikeABI::TypeTestABI_kDstTypeReg;
+  static constexpr dart::compiler::LikeABI kInstantiatorTypeArgumentsReg =
+      dart::compiler::LikeABI::TypeTestABI_kInstantiatorTypeArgumentsReg;
+  static constexpr dart::compiler::LikeABI kFunctionTypeArgumentsReg =
+      dart::compiler::LikeABI::TypeTestABI_kFunctionTypeArgumentsReg;
+  static constexpr dart::compiler::LikeABI kSubtypeTestCacheReg =
+      dart::compiler::LikeABI::TTABI_kSubtypeTestCache;
+  static constexpr dart::compiler::LikeABI kScratchReg =
+      dart::compiler::LikeABI::TTABI_kScratch;
+  static constexpr dart::compiler::LikeABI kSubtypeTestCacheResultReg =
+      dart::compiler::LikeABI::TypeTestABI_kSubtypeTestCacheResultReg;
+#else
+  static constexpr dart::compiler::LikeABI kDstTypeReg = dart::compiler::LikeABI::EBX;
+  static constexpr dart::compiler::LikeABI kInstantiatorTypeArgumentsReg = dart::compiler::LikeABI::EDX;
+  static constexpr dart::compiler::LikeABI kFunctionTypeArgumentsReg = dart::compiler::LikeABI::ECX;
+  static constexpr dart::compiler::LikeABI kSubtypeTestCacheReg =
+      dart::compiler::LikeABI::EDI;  // On ia32 we don't use CODE_REG.
+#endif // 0
 
   // For call to InstanceOfStub.
   static constexpr Register kInstanceOfResultReg = kInstanceReg;
   // For call to SubtypeNTestCacheStub.
-  static constexpr Register kSubtypeTestCacheResultReg =
-      TypeTestABI::kSubtypeTestCacheReg;
-};
+  // static const Register kSubtypeTestCacheResultReg = EDI;
+  //     TypeTestABI::kSubtypeTestCacheReg;
+  // No registers need saving across SubtypeTestCacheStub calls.
+  // static const intptr_t kSubtypeTestCacheStubCallerSavedRegisters =
+  //     1 << kSubtypeTestCacheResultReg;
 
-// Calling convention when calling kSubtypeCheckRuntimeEntry, to match other
-// architectures. We don't generate a call to the AssertSubtypeStub because we
-// need CODE_REG to store a fifth argument.
-struct AssertSubtypeABI {
-  static constexpr Register kSubTypeReg = EAX;
-  static constexpr Register kSuperTypeReg = EBX;
-  static constexpr Register kInstantiatorTypeArgumentsReg = EDX;
-  static constexpr Register kFunctionTypeArgumentsReg = ECX;
-  static constexpr Register kDstNameReg =
-      EDI;  /// On ia32 we don't use CODE_REG.
+  static const intptr_t kPreservedAbiRegisters =
+      (1 << kInstanceReg);
 
-  // No result register, as AssertSubtype is only run for side effect
-  // (throws if the subtype check fails).
+  static const intptr_t kNonPreservedAbiRegisters =
+      TTSInternalRegs::kInternalRegisters;
+
+  static const intptr_t kAbiRegisters =
+      kPreservedAbiRegisters | kNonPreservedAbiRegisters;
 };
 
 // For calling the ia32-specific AssertAssignableStub
@@ -228,9 +341,16 @@ struct RangeErrorABI {
 
 // ABI for AllocateObjectStub.
 struct AllocateObjectABI {
-  static constexpr Register kResultReg = EAX;
-  static constexpr Register kTypeArgumentsReg = EDX;
-  static constexpr Register kTagsReg = kNoRegister;  // Not used.
+  static const Register kResultReg = EAX;
+#if USE_LIKE_ABI_SEPARATED
+  static constexpr dart::compiler::LikeABI kTypeArgumentsReg =
+      dart::compiler::LikeABI::AllocateObjectABI_kTypeArgumentsReg;
+  static constexpr dart::compiler::LikeABI kTagsReg =
+      dart::compiler::LikeABI::AllocateObjectABI_kTagsReg;
+#else
+  static constexpr dart::compiler::LikeABI kTypeArgumentsReg = dart::compiler::LikeABI::EDX;
+  static constexpr dart::compiler::LikeABI kTagsReg = dart::compiler::LikeABI::kNoRegister;
+#endif
 };
 
 // ABI for Allocate{Mint,Double,Float32x4,Float64x2}Stub.
@@ -242,9 +362,20 @@ struct AllocateBoxABI {
 // ABI for AllocateClosureStub.
 struct AllocateClosureABI {
   static constexpr Register kResultReg = AllocateObjectABI::kResultReg;
-  static constexpr Register kFunctionReg = EBX;
+#if USE_LIKE_ABI_SEPARATED
+  static constexpr dart::compiler::LikeABI kFunctionReg =
+      dart::compiler::LikeABI::AllocateClosureABI_kFunctionReg;
+#else
+  static constexpr dart::compiler::LikeABI kFunctionReg = dart::compiler::LikeABI::EBX;
+#endif
   static constexpr Register kContextReg = ECX;
   static constexpr Register kScratchReg = EDX;
+};
+
+// ABI for AllocateMintShared*Stub.
+struct AllocateMintABI {
+  static const Register kResultReg = AllocateObjectABI::kResultReg;
+  static const Register kTempReg = EBX;
 };
 
 // ABI for AllocateArrayStub.
@@ -298,15 +429,27 @@ struct DoubleToIntegerStubABI {
 struct SuspendStubABI {
   static constexpr Register kArgumentReg = EAX;
   static constexpr Register kTypeArgsReg = EDX;  // Can be the same as kTempReg
-  static constexpr Register kTempReg = EDX;
-  static constexpr Register kFrameSizeReg = ECX;
-  static constexpr Register kSuspendStateReg = EBX;
-  static constexpr Register kFunctionDataReg = EDI;
-  // Can reuse THR.
-  static constexpr Register kSrcFrameReg = ESI;
-  // Can reuse kFunctionDataReg.
-  static constexpr Register kDstFrameReg = EDI;
-
+#if USE_LIKE_ABI_SEPARATED
+  static constexpr dart::compiler::LikeABI kTempReg =
+      dart::compiler::LikeABI::SuspendStubABI_kTempReg;
+  static constexpr dart::compiler::LikeABI kFrameSizeReg =
+      dart::compiler::LikeABI::SuspendStubABI_kFrameSizeReg;
+  static constexpr dart::compiler::LikeABI kSuspendStateReg =
+      dart::compiler::LikeABI::SuspendStubABI_kSuspendStateReg;
+  static constexpr dart::compiler::LikeABI kFunctionDataReg =
+      dart::compiler::LikeABI::SuspendStubABI_kFunctionDataReg;
+  static constexpr dart::compiler::LikeABI kSrcFrameReg =
+      dart::compiler::LikeABI::SuspendStubABI_kSrcFrameReg;
+  static constexpr dart::compiler::LikeABI kDstFrameReg =
+      dart::compiler::LikeABI::SuspendStubABI_kDstFrameReg;
+#else
+  static constexpr dart::compiler::LikeABI kTempReg = dart::compiler::LikeABI::EDX;
+  static constexpr dart::compiler::LikeABI kFrameSizeReg = dart::compiler::LikeABI::ECX;
+  static constexpr dart::compiler::LikeABI kSuspendStateReg = dart::compiler::LikeABI::EBX;
+  static constexpr dart::compiler::LikeABI kFunctionDataReg = dart::compiler::LikeABI::EDI;
+  static constexpr dart::compiler::LikeABI kSrcFrameReg = dart::compiler::LikeABI::ESI;
+  static constexpr dart::compiler::LikeABI kDstFrameReg = dart::compiler::LikeABI::EDI;
+#endif
   // Number of bytes to skip after
   // suspend stub return address in order to resume.
   // IA32: mov esp, ebp; pop ebp; ret
@@ -351,12 +494,24 @@ struct AsyncExceptionHandlerStubABI {
 // ABI for CloneSuspendStateStub.
 struct CloneSuspendStateStubABI {
   static constexpr Register kSourceReg = EAX;
-  static constexpr Register kDestinationReg = EBX;
-  static constexpr Register kTempReg = EDX;
-  static constexpr Register kFrameSizeReg = ECX;
-  // Can reuse THR.
-  static constexpr Register kSrcFrameReg = ESI;
-  static constexpr Register kDstFrameReg = EDI;
+#if USE_LIKE_ABI_SEPARATED
+  static constexpr dart::compiler::LikeABI kDestinationReg =
+      dart::compiler::LikeABI::CloneSuspendStateStubABI_kDestinationReg;
+  static constexpr dart::compiler::LikeABI kTempReg =
+      dart::compiler::LikeABI::CloneSuspendStateStubABI_kTempReg;
+  static constexpr dart::compiler::LikeABI kFrameSizeReg =
+      dart::compiler::LikeABI::CloneSuspendStateStubABI_kFrameSizeReg;
+  static constexpr dart::compiler::LikeABI kSrcFrameReg =
+      dart::compiler::LikeABI::CloneSuspendStateStubABI_kSrcFrameReg;
+  static constexpr dart::compiler::LikeABI kDstFrameReg =
+      dart::compiler::LikeABI::CloneSuspendStateStubABI_kDstFrameReg;
+#else
+  static constexpr dart::compiler::LikeABI kDestinationReg = dart::compiler::LikeABI::EBX;
+  static constexpr dart::compiler::LikeABI kTempReg = dart::compiler::LikeABI::EDX;
+  static constexpr dart::compiler::LikeABI kFrameSizeReg = dart::compiler::LikeABI::ECX;
+  static constexpr dart::compiler::LikeABI kSrcFrameReg = dart::compiler::LikeABI::ESI;
+  static constexpr dart::compiler::LikeABI kDstFrameReg = dart::compiler::LikeABI::EDI;
+#endif
 };
 
 // ABI for FfiAsyncCallbackSendStub.
@@ -371,7 +526,12 @@ struct FfiAsyncCallbackSendStubABI {
 // Note: dispatch table calls are never actually generated on IA32, this
 // declaration is only added for completeness.
 struct DispatchTableNullErrorABI {
-  static constexpr Register kClassIdReg = EAX;
+#if USE_LIKE_ABI_SEPARATED
+  static constexpr dart::compiler::LikeABI kClassIdReg =
+      dart::compiler::LikeABI::DispatchTableNullErrorABI_kClassIdReg;
+#else
+  static constexpr dart::compiler::LikeABI kClassIdReg = dart::compiler::LikeABI::EAX;
+#endif
 };
 
 typedef uint32_t RegList;
@@ -379,8 +539,7 @@ const RegList kAllCpuRegistersList = 0xFF;
 const RegList kAllFpuRegistersList = (1 << kNumberOfFpuRegisters) - 1;
 
 const intptr_t kReservedCpuRegisters = (1 << SPREG) | (1 << FPREG) | (1 << THR);
-constexpr intptr_t kNumberOfReservedCpuRegisters =
-    Utils::CountOneBits32(kReservedCpuRegisters);
+constexpr intptr_t kNumberOfReservedCpuRegisters = 3;
 // CPU registers available to Dart allocator.
 const RegList kDartAvailableCpuRegs =
     kAllCpuRegistersList & ~kReservedCpuRegisters;
@@ -388,7 +547,7 @@ constexpr int kNumberOfDartAvailableCpuRegs =
     kNumberOfCpuRegisters - kNumberOfReservedCpuRegisters;
 // No reason to prefer certain registers on IA32.
 constexpr int kRegisterAllocationBias = 0;
-constexpr int kStoreBufferWrapperSize = 11;
+constexpr int kStoreBufferWrapperSize = 13;
 
 const RegList kAbiPreservedCpuRegs = (1 << EDI) | (1 << ESI) | (1 << EBX);
 
@@ -423,6 +582,8 @@ enum ScaleFactor {
 #endif
   // Used for Smi-boxed indices.
   TIMES_COMPRESSED_HALF_WORD_SIZE = TIMES_COMPRESSED_WORD_SIZE - 1,
+  TIMES_2_IA32_4_X64 = TIMES_2,
+  TIMES_4_IA32_8_X64 = TIMES_4,
 };
 
 class Instr {
@@ -455,11 +616,15 @@ const int MAX_NOP_SIZE = 8;
 
 class CallingConventions {
  public:
+  // TODO(xafster): to remove
   static const Register ArgumentRegisters[];
+
   static constexpr intptr_t kArgumentRegisters = 0;
   static constexpr intptr_t kFpuArgumentRegisters = 0;
   static constexpr intptr_t kNumArgRegs = 0;
+#if 0
   static constexpr Register kPointerToReturnStructRegisterCall = kNoRegister;
+#endif  // 0
 
   static const XmmRegister FpuArgumentRegisters[];
   static constexpr intptr_t kXmmArgumentRegisters = 0;
@@ -516,6 +681,52 @@ class CallingConventions {
   static constexpr ExtensionStrategy kReturnRegisterExtension = kNotExtended;
   static constexpr ExtensionStrategy kArgumentRegisterExtension = kNotExtended;
   static constexpr ExtensionStrategy kArgumentStackExtension = kExtendedTo4;
+};
+
+struct AssertSubtypeABI {
+#if USE_LIKE_ABI_SEPARATED
+  static constexpr dart::compiler::LikeABI kSubTypeReg =
+      dart::compiler::LikeABI::AssertSubtypeABI_kSubTypeReg;
+  static constexpr dart::compiler::LikeABI kSuperTypeReg =
+      dart::compiler::LikeABI::AssertSubtypeABI_kSuperTypeReg;
+  static constexpr dart::compiler::LikeABI kInstantiatorTypeArgumentsReg =
+      dart::compiler::LikeABI::AssertSubtypeABI_kInstantiatorTypeArgumentsReg;
+  static constexpr dart::compiler::LikeABI kFunctionTypeArgumentsReg =
+      dart::compiler::LikeABI::AssertSubtypeABI_kFunctionTypeArgumentsReg;
+  static constexpr dart::compiler::LikeABI kDstNameReg =
+      dart::compiler::LikeABI::AssertSubtypeABI_kDstNameReg;
+#else
+  static constexpr dart::compiler::LikeABI kSubTypeReg = dart::compiler::LikeABI::EAX;
+  static constexpr dart::compiler::LikeABI kSuperTypeReg = dart::compiler::LikeABI::EBX;
+  static constexpr dart::compiler::LikeABI kInstantiatorTypeArgumentsReg = dart::compiler::LikeABI::EDX;
+  static constexpr dart::compiler::LikeABI kFunctionTypeArgumentsReg = dart::compiler::LikeABI::ECX;
+  static constexpr dart::compiler::LikeABI kDstNameReg = dart::compiler::LikeABI::EDI;
+#endif
+
+  // No result register, as AssertSubtype is only run for side effect
+  // (throws if the subtype check fails).
+};
+
+struct STCInternalRegs {
+#if USE_LIKE_ABI_SEPARATED
+  static constexpr dart::compiler::LikeABI kCacheEntryReg =
+      dart::compiler::LikeABI::STCInternalRegs_kCacheEntryReg;
+  static constexpr dart::compiler::LikeABI kInstanceCidOrSignatureReg =
+      dart::compiler::LikeABI::STCInternalRegs_kInstanceCidOrSignatureReg;
+  static constexpr dart::compiler::LikeABI
+      kInstanceInstantiatorTypeArgumentsReg = dart::compiler::LikeABI::
+          STCInternalRegs_kInstanceInstantiatorTypeArgumentsReg;
+#else
+  static_assert(false && "Has no implementation");
+#endif
+
+  static constexpr intptr_t kInternalRegisters = 0;
+
+#if 0
+  static constexpr intptr_t kInternalRegisters =
+      (1 << kCacheEntryReg) | (1 << kInstanceCidOrSignatureReg) |
+      (1 << kInstanceInstantiatorTypeArgumentsReg);
+#endif
 };
 
 const uword kBreakInstructionFiller = 0xCCCCCCCC;

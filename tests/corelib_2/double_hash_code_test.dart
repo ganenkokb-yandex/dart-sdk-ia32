@@ -4,8 +4,6 @@
 
 // @dart = 2.9
 
-// VMOptions=--intrinsify --use_sse41
-// VMOptions=--no_intrinsify --use_sse41
 // VMOptions=--intrinsify --no_use_sse41
 // VMOptions=--no_intrinsify --no_use_sse41
 

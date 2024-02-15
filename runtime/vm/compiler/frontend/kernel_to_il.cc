@@ -1066,7 +1066,7 @@ bool FlowGraphBuilder::IsRecognizedMethodForFlowGraph(
     case MethodRecognizer::kDoubleCeilToInt:
     case MethodRecognizer::kDoubleFloorToInt:
       if (!FlowGraphCompiler::SupportsUnboxedDoubles()) return false;
-#if defined(TARGET_ARCH_X64)
+#if defined(TARGET_ARCH_X64) || defined(TARGET_ARCH_IA32)
       return CompilerState::Current().is_aot() || FLAG_target_unknown_cpu;
 #elif defined(TARGET_ARCH_ARM64) || defined(TARGET_ARCH_RISCV32) ||            \
     defined(TARGET_ARCH_RISCV64)

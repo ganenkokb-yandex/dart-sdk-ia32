@@ -86,7 +86,7 @@ class StubCode : public AllStatic {
   static CodePtr GetAllocationStubForTypedData(classid_t class_id);
 #endif  // !defined(DART_PRECOMPILED_RUNTIME)
 
-#if !defined(TARGET_ARCH_IA32)
+#if !defined(TARGET_ARCH_IA32_UNDEFINED)
   static CodePtr GetBuildGenericMethodExtractorStub(
       compiler::ObjectPoolBuilder* pool) {
     return GetBuildMethodExtractorStub(pool, /*generic=*/true);

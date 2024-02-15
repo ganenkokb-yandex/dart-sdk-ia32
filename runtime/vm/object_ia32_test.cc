@@ -33,7 +33,9 @@ void GenerateEmbedStringInCode(compiler::Assembler* assembler,
                                const char* str) {
   const String& string_object =
       String::ZoneHandle(String::New(str, Heap::kOld));
+  __ EnterStubFrame();
   __ LoadObject(EAX, string_object);
+  __ LeaveStubFrame();
   __ ret();
 }
 

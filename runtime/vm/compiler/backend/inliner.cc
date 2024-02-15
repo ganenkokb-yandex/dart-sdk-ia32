@@ -1380,7 +1380,7 @@ class CallSiteInliner : public ValueObject {
         {
           COMPILER_TIMINGS_TIMER_SCOPE(thread(), PopulateWithICData);
 
-#if defined(DART_PRECOMPILER) && !defined(TARGET_ARCH_IA32)
+#if defined(DART_PRECOMPILER) && !defined(TARGET_ARCH_IA32_UNDEFINED)
           if (CompilerState::Current().is_aot()) {
             callee_graph->PopulateWithICData(parsed_function->function());
           }
@@ -1481,7 +1481,7 @@ class CallSiteInliner : public ValueObject {
           // TODO(fschneider): Improve suppression of speculative inlining.
           // Deopt-ids overlap between caller and callee.
           if (CompilerState::Current().is_aot()) {
-#if defined(DART_PRECOMPILER) && !defined(TARGET_ARCH_IA32)
+#if defined(DART_PRECOMPILER) && !defined(TARGET_ARCH_IA32_UNDEFINED)
             AotCallSpecializer call_specializer(inliner_->precompiler_,
                                                 callee_graph,
                                                 inliner_->speculative_policy_);
@@ -1496,7 +1496,7 @@ class CallSiteInliner : public ValueObject {
             }
 #else
             UNREACHABLE();
-#endif  // defined(DART_PRECOMPILER) && !defined(TARGET_ARCH_IA32)
+#endif  // defined(DART_PRECOMPILER) && !defined(TARGET_ARCH_IA32_UNDEFINED)
           } else {
             JitCallSpecializer call_specializer(callee_graph,
                                                 inliner_->speculative_policy_);

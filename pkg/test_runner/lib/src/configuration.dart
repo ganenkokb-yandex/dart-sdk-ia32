@@ -448,11 +448,6 @@ class TestConfiguration {
       isValid = false;
     }
 
-    if (architecture == Architecture.ia32 && compiler == Compiler.dartkp) {
-      print("Warning: IA32 does not support AOT mode.");
-      isValid = false;
-    }
-
     if (system == System.android &&
         !(architecture == Architecture.ia32 ||
             architecture == Architecture.x64 ||

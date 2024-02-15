@@ -30,6 +30,7 @@ intptr_t IndexFromPPLoadDisp32(uword start) {
 }
 
 bool DecodeLoadObjectFromPoolOrThread(uword pc, const Code& code, Object* obj) {
+#if 0
   ASSERT(code.ContainsInstructionAt(pc));
 
   uint8_t* bytes = reinterpret_cast<uint8_t*>(pc);
@@ -67,7 +68,7 @@ bool DecodeLoadObjectFromPoolOrThread(uword pc, const Code& code, Object* obj) {
       }
     }
   }
-
+#endif
   return false;
 }
 
@@ -79,16 +80,56 @@ intptr_t TypeTestingStubCallPattern::GetSubtypeTestCachePoolIndex() {
       0xe8, -1, -1, -1, -1,  // callq [PC + <offset>]
   };
   static int16_t pattern_disp8[] = {
-      0x4d, 0x8b, 0x4f, -1,               // movq R9, [PP + offset]
+      // 0:  49 89 8e ff ff 00 00    mov    QWORD PTR [r14+0xffff],rcx
+      // 7:  49 8b 8e ff ff 00 00    mov    rcx,QWORD PTR [r14+0xffff]
+      // e:  49 89 86 ff ff 00 00    mov    QWORD PTR [r14+0xffff],rax
+      // 15: 49 8b 86 ff ff 00 00    mov    rax,QWORD PTR [r14+0xffff]
+      // 1c: 48 8b 48 ff             mov    rcx,QWORD PTR [rax-0x1]
+      // 20: 49 89 86 ff ff 00 00    mov    QWORD PTR [r14+0xffff],rax
+      // 27: 49 8b 86 ff ff 00 00    mov    rax,QWORD PTR [r14+0xffff]
+      // 2e: 49 89 8e ff ff 00 00    mov    QWORD PTR [r14+0xffff],rcx
+      // 35: 49 8b 8e ff ff 00 00    mov    rcx,QWORD PTR [r14+0xffff]
+      // 3c: 49 8b b6 ff ff 00 00    mov    rsi,QWORD PTR [r14+0xffff]
+      0x49, 0x89, 0x8e, -1, -1, -1, -1,
+      0x49, 0x8b, 0x8e, -1, -1, -1, -1,
+      0x49, 0x89, 0x86, -1, -1, -1, -1,
+      0x49, 0x8b, 0x86, -1, -1, -1, -1,
+      0x48, 0x8b, 0x48, -1,
+      0x49, 0x89, 0x86, -1, -1, -1, -1,
+      0x49, 0x8b, 0x86, -1, -1, -1, -1,
+      0x49, 0x89, 0x8e, -1, -1, -1, -1,
+      0x49, 0x8b, 0x8e, -1, -1, -1, -1,
+      0x49, 0x8b, 0xb6, -1, -1, -1, -1,
   };
   static int16_t pattern_disp32[] = {
-      0x4d, 0x8b, 0x8f, -1, -1, -1, -1,   // movq R9, [PP + offset]
+      // 0:  49 89 8e ff ff 00 00    mov    QWORD PTR [r14+0xffff],rcx
+      // 7:  49 8b 8e ff ff 00 00    mov    rcx,QWORD PTR [r14+0xffff]
+      // e:  49 89 86 ff ff 00 00    mov    QWORD PTR [r14+0xffff],rax
+      // 15: 49 8b 86 ff ff 00 00    mov    rax,QWORD PTR [r14+0xffff]
+      // 1c: 48 8b 88 ff ff 00 00    mov    rcx,QWORD PTR [rax+0xffff]
+      // 23: 49 89 86 ff ff ff ff    mov    QWORD PTR [r14-0x1],rax
+      // 2a: 49 8b 86 ff ff 00 00    mov    rax,QWORD PTR [r14+0xffff]
+      // 31: 49 89 8e ff ff 00 00    mov    QWORD PTR [r14+0xffff],rcx
+      // 38: 49 8b 8e ff ff 00 00    mov    rcx,QWORD PTR [r14+0xffff]
+      // 3f: 49 8b b6 ff ff 00 00    mov    rsi,QWORD PTR [r14+0xffff]
+      0x49, 0x89, 0x8e, -1, -1, -1, -1,
+      0x49, 0x8b, 0x8e, -1, -1, -1, -1,
+      0x49, 0x89, 0x86, -1, -1, -1, -1,
+      0x49, 0x8b, 0x86, -1, -1, -1, -1,
+      0x48, 0x8b, 0x88, -1, -1, -1, -1,
+      0x49, 0x89, 0x86, -1, -1, -1, -1,
+      0x49, 0x8b, 0x86, -1, -1, -1, -1,
+      0x49, 0x89, 0x8e, -1, -1, -1, -1,
+      0x49, 0x8b, 0x8e, -1, -1, -1, -1,
+      0x49, 0x8b, 0xb6, -1, -1, -1, -1,
   };
-
+  int offset_for_offset = 31;
   uword pc = pc_;
+  int skip_offset = 0;
   if (MatchesPattern(pc, direct_call_pattern,
                      ARRAY_SIZE(direct_call_pattern))) {
     pc -= ARRAY_SIZE(direct_call_pattern);
+    skip_offset = 7;
   } else if (MatchesPattern(pc, indirect_call_pattern,
                             ARRAY_SIZE(indirect_call_pattern))) {
     pc -= ARRAY_SIZE(indirect_call_pattern);
@@ -96,10 +137,14 @@ intptr_t TypeTestingStubCallPattern::GetSubtypeTestCachePoolIndex() {
     FATAL("Failed to decode at %" Px, pc_);
   }
 
-  if (MatchesPattern(pc, pattern_disp8, ARRAY_SIZE(pattern_disp8))) {
-    return IndexFromPPLoadDisp8(pc - 1);
-  } else if (MatchesPattern(pc, pattern_disp32, ARRAY_SIZE(pattern_disp32))) {
-    return IndexFromPPLoadDisp32(pc - 4);
+  if (MatchesPattern(pc, pattern_disp8,
+                     ARRAY_SIZE(pattern_disp8) - skip_offset)) {
+    return IndexFromPPLoadDisp8(pc - ARRAY_SIZE(pattern_disp8) + skip_offset +
+                                offset_for_offset);
+  } else if (MatchesPattern(pc, pattern_disp32,
+                            ARRAY_SIZE(pattern_disp32) - skip_offset)) {
+    return IndexFromPPLoadDisp32(pc - ARRAY_SIZE(pattern_disp32) + skip_offset +
+                                 offset_for_offset);
   } else {
     FATAL("Failed to decode at %" Px, pc);
   }

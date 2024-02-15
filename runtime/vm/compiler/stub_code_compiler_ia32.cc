@@ -10,6 +10,7 @@
 #define SHOULD_NOT_INCLUDE_RUNTIME
 
 #include "vm/compiler/stub_code_compiler.h"
+#include "vm/compiler/stub_code_compiler_ia32_x64.h"
 
 #if defined(TARGET_ARCH_IA32)
 
@@ -18,6 +19,7 @@
 #include "vm/compiler/api/type_check_mode.h"
 #include "vm/compiler/assembler/assembler.h"
 #include "vm/compiler/backend/locations.h"
+#include "vm/compiler/like_registers.h"
 #include "vm/constants.h"
 #include "vm/ffi_callback_metadata.h"
 #include "vm/instructions.h"
@@ -126,7 +128,13 @@ void StubCodeCompiler::GenerateCallToRuntimeStub() {
   __ movl(Address(THR, target::Thread::top_exit_frame_info_offset()),
           Immediate(0));
 
-  __ LeaveFrame();
+  // Restore the global object pool after returning from runtime (old space is
+  // moving, so the GOP could have been relocated).
+  if (FLAG_precompiled_mode) {
+    __ movl(PP, Address(THR, target::Thread::global_object_pool_offset()));
+  }
+
+  __ LeaveStubFrame();
 
   // The following return can jump to a lazy-deopt stub, which assumes EAX
   // contains a return value and will save it in a GC-visible way.  We therefore
@@ -389,6 +397,7 @@ void StubCodeCompiler::GenerateFfiCallbackTrampolineStub() {
 #endif
 }
 
+#if defined(USE_ORIG_IA32)
 void StubCodeCompiler::GenerateSharedStubGeneric(
     bool save_fpu_registers,
     intptr_t self_code_stub_offset_from_thread,
@@ -397,7 +406,9 @@ void StubCodeCompiler::GenerateSharedStubGeneric(
   // Only used in AOT.
   __ Breakpoint();
 }
+#endif
 
+#if defined(USE_ORIG_IA32)
 void StubCodeCompiler::GenerateSharedStub(
     bool save_fpu_registers,
     const RuntimeEntry* target,
@@ -407,21 +418,26 @@ void StubCodeCompiler::GenerateSharedStub(
   // Only used in AOT.
   __ Breakpoint();
 }
+#endif
 
+#if defined(USE_ORIG_IA32)
 void StubCodeCompiler::GenerateRangeError(bool with_fpu_regs) {
   // Only used in AOT.
   __ Breakpoint();
 }
+#endif
 
 void StubCodeCompiler::GenerateWriteError(bool with_fpu_regs) {
   // Only used in AOT.
   __ Breakpoint();
 }
 
+#if defined(USE_ORIG_IA32)
 void StubCodeCompiler::GenerateDispatchTableNullErrorStub() {
   // Only used in AOT.
   __ Breakpoint();
 }
+#endif
 
 // Input parameters:
 //   ESP : points to return address.
@@ -507,7 +523,13 @@ static void GenerateCallNativeWithWrapperStub(Assembler* assembler,
   __ movl(Address(THR, target::Thread::top_exit_frame_info_offset()),
           Immediate(0));
 
-  __ LeaveFrame();
+  // Restore the global object pool after returning from runtime (old space is
+  // moving, so the GOP could have been relocated).
+  if (FLAG_precompiled_mode) {
+    __ movl(PP, Address(THR, target::Thread::global_object_pool_offset()));
+  }
+
+  __ LeaveStubFrame();
   __ ret();
 }
 
@@ -545,12 +567,12 @@ void StubCodeCompiler::GenerateCallStaticFunctionStub() {
   __ pushl(ARGS_DESC_REG);  // Preserve arguments descriptor array.
   __ pushl(Immediate(0));  // Setup space on stack for return value.
   __ CallRuntime(kPatchStaticCallRuntimeEntry, 0);
-  __ popl(EAX);  // Get Code object result.
+  __ popl(CODE_REG);       // Get Code object result.
   __ popl(ARGS_DESC_REG);  // Restore arguments descriptor array.
   // Remove the stub frame as we are about to jump to the dart function.
-  __ LeaveFrame();
+  __ LeaveStubFrame();
 
-  __ jmp(FieldAddress(EAX, target::Code::entry_point_offset()));
+  __ jmp(FieldAddress(CODE_REG, target::Code::entry_point_offset()));
 }
 
 // Called from a static call only when an invalid code has been entered
@@ -561,19 +583,29 @@ void StubCodeCompiler::GenerateFixCallersTargetStub() {
   __ BranchOnMonomorphicCheckedEntryJIT(&monomorphic);
 
   // This was a static call.
+  // Load code pointer to this stub from the thread:
+  // The one that is passed in, is not correct - it points to the code object
+  // that needs to be replaced.
+  __ movl(CODE_REG,
+          Address(THR, target::Thread::fix_callers_target_code_offset()));
   __ EnterStubFrame();
   __ pushl(ARGS_DESC_REG);  // Preserve arguments descriptor array.
   __ pushl(Immediate(0));  // Setup space on stack for return value.
   __ CallRuntime(kFixCallersTargetRuntimeEntry, 0);
-  __ popl(EAX);  // Get Code object.
+  __ popl(CODE_REG);       // Get Code object.
   __ popl(ARGS_DESC_REG);  // Restore arguments descriptor array.
-  __ movl(EAX, FieldAddress(EAX, target::Code::entry_point_offset()));
-  __ LeaveFrame();
+  __ movl(EAX, FieldAddress(CODE_REG, target::Code::entry_point_offset()));
+  __ LeaveStubFrame();
   __ jmp(EAX);
   __ int3();
 
   __ Bind(&monomorphic);
   // This was a switchable call.
+  // Load code pointer to this stub from the thread:
+  // The one that is passed in, is not correct - it points to the code object
+  // that needs to be replaced.
+  __ movl(CODE_REG,
+          Address(THR, target::Thread::fix_callers_target_code_offset()));
   __ EnterStubFrame();
   __ pushl(Immediate(0));  // Result slot.
   __ pushl(EBX);           // Preserve receiver.
@@ -584,7 +616,7 @@ void StubCodeCompiler::GenerateFixCallersTargetStub() {
   __ popl(CODE_REG);  // Get target Code object.
   __ movl(EAX, FieldAddress(CODE_REG, target::Code::entry_point_offset(
                                           CodeEntryKind::kMonomorphic)));
-  __ LeaveFrame();
+  __ LeaveStubFrame();
   __ jmp(EAX);
   __ int3();
 }
@@ -592,12 +624,17 @@ void StubCodeCompiler::GenerateFixCallersTargetStub() {
 // Called from object allocate instruction when the allocation stub has been
 // disabled.
 void StubCodeCompiler::GenerateFixAllocationStubTargetStub() {
+  // Load code pointer to this stub from the thread:
+  // The one that is passed in, is not correct - it points to the code object
+  // that needs to be replaced.
+  __ movl(CODE_REG,
+          Address(THR, target::Thread::fix_allocation_stub_code_offset()));
   __ EnterStubFrame();
   __ pushl(Immediate(0));  // Setup space on stack for return value.
   __ CallRuntime(kFixAllocationStubTargetRuntimeEntry, 0);
-  __ popl(EAX);  // Get Code object.
-  __ movl(EAX, FieldAddress(EAX, target::Code::entry_point_offset()));
-  __ LeaveFrame();
+  __ popl(CODE_REG);  // Get Code object.
+  __ movl(EAX, FieldAddress(CODE_REG, target::Code::entry_point_offset()));
+  __ LeaveStubFrame();
   __ jmp(EAX);
   __ int3();
 }
@@ -605,16 +642,21 @@ void StubCodeCompiler::GenerateFixAllocationStubTargetStub() {
 // Called from object allocate instruction when the allocation stub for a
 // generic class has been disabled.
 void StubCodeCompiler::GenerateFixParameterizedAllocationStubTargetStub() {
+  // Load code pointer to this stub from the thread:
+  // The one that is passed in, is not correct - it points to the code object
+  // that needs to be replaced.
+  __ movl(CODE_REG,
+          Address(THR, target::Thread::fix_allocation_stub_code_offset()));
   __ EnterStubFrame();
   // Preserve type arguments register.
   __ pushl(AllocateObjectABI::kTypeArgumentsReg);
   __ pushl(Immediate(0));  // Setup space on stack for return value.
   __ CallRuntime(kFixAllocationStubTargetRuntimeEntry, 0);
-  __ popl(EAX);  // Get Code object.
+  __ popl(CODE_REG);  // Get Code object.
   // Restore type arguments register.
   __ popl(AllocateObjectABI::kTypeArgumentsReg);
-  __ movl(EAX, FieldAddress(EAX, target::Code::entry_point_offset()));
-  __ LeaveFrame();
+  __ movl(EAX, FieldAddress(CODE_REG, target::Code::entry_point_offset()));
+  __ LeaveStubFrame();
   __ jmp(EAX);
   __ int3();
 }
@@ -623,10 +665,9 @@ void StubCodeCompiler::GenerateFixParameterizedAllocationStubTargetStub() {
 //   EDX: smi-tagged argument count, may be zero.
 //   EBP[target::frame_layout.param_end_from_fp + 1]: last argument.
 // Uses EAX, EBX, ECX, EDX, EDI.
-static void PushArrayOfArguments(Assembler* assembler) {
+void PushArrayOfArguments(Assembler* assembler) {
   // Allocate array to store arguments of caller.
-  const Immediate& raw_null = Immediate(target::ToRawPointer(NullObject()));
-  __ movl(ECX, raw_null);  // Null element type for raw Array.
+  __ LoadObject(ECX, NullObject());
   __ Call(StubCodeAllocateArray());
   __ SmiUntag(EDX);
   // EAX: newly allocated array.
@@ -675,8 +716,9 @@ static void PushArrayOfArguments(Assembler* assembler) {
 // Parts of the code cannot GC, part of the code can GC.
 static void GenerateDeoptimizationSequence(Assembler* assembler,
                                            DeoptStubKind kind) {
-  // Leaf runtime function DeoptimizeCopyFrame expects a Dart frame.
-  __ EnterDartFrame(0);
+  // DeoptimizeCopyFrame expects a Dart frame, i.e. EnterDartFrame(0), but there
+  // is no need to set the correct PC marker or load PP, since they get patched.
+  __ EnterStubFrame();
   // The code in this frame may not cause GC. kDeoptimizeCopyFrameRuntimeEntry
   // and kDeoptimizeFillFrameRuntimeEntry are leaf runtime calls.
   const intptr_t saved_result_slot_from_fp =
@@ -693,7 +735,7 @@ static void GenerateDeoptimizationSequence(Assembler* assembler,
   // Push registers in their enumeration order: lowest register number at
   // lowest address.
   for (intptr_t i = kNumberOfCpuRegisters - 1; i >= 0; i--) {
-    if (i == CODE_REG) {
+    if (/*i == CODE_REG*/ false) {
       // Save the original value of CODE_REG pushed before invoking this stub
       // instead of the value used to call this stub.
       __ pushl(Address(EBP, 2 * target::kWordSize));
@@ -734,14 +776,16 @@ static void GenerateDeoptimizationSequence(Assembler* assembler,
             Address(EBP, saved_stacktrace_slot_from_fp * target::kWordSize));
   }
 
+  __ RestoreCodePointer();
   __ LeaveDartFrame();
   __ popl(EDX);       // Preserve return address.
   __ movl(ESP, EBP);  // Discard optimized frame.
   __ subl(ESP, EAX);  // Reserve space for deoptimized frame.
   __ pushl(EDX);      // Restore return address.
 
-  // Leaf runtime function DeoptimizeFillFrame expects a Dart frame.
-  __ EnterDartFrame(0);
+  // DeoptimizeFillFrame expects a Dart frame, i.e. EnterDartFrame(0), but there
+  // is no need to set the correct PC marker or load PP, since they get patched.
+  __ EnterStubFrame();
   if (kind == kLazyDeoptFromReturn) {
     __ pushl(EBX);  // Preserve result as first local.
   } else if (kind == kLazyDeoptFromThrow) {
@@ -766,6 +810,9 @@ static void GenerateDeoptimizationSequence(Assembler* assembler,
     __ movl(ECX, Address(EBP, (target::frame_layout.first_local_from_fp - 1) *
                                   target::kWordSize));
   }
+  // Code above cannot cause GC.
+  // There is a Dart Frame on the stack. We must restore PP and leave frame.
+  __ RestoreCodePointer();
   // Code above cannot cause GC.
   __ LeaveDartFrame();
 
@@ -801,8 +848,11 @@ static void GenerateDeoptimizationSequence(Assembler* assembler,
 
 // EAX: result, must be preserved
 void StubCodeCompiler::GenerateDeoptimizeLazyFromReturnStub() {
+  __ pushl(Immediate(kZapCodeReg));
   // Return address for "call" to deopt stub.
   __ pushl(Immediate(kZapReturnAddress));
+  __ movl(CODE_REG,
+          Address(THR, target::Thread::lazy_deopt_from_return_stub_offset()));
   GenerateDeoptimizationSequence(assembler, kLazyDeoptFromReturn);
   __ ret();
 }
@@ -810,17 +860,26 @@ void StubCodeCompiler::GenerateDeoptimizeLazyFromReturnStub() {
 // EAX: exception, must be preserved
 // EDX: stacktrace, must be preserved
 void StubCodeCompiler::GenerateDeoptimizeLazyFromThrowStub() {
+  // Push zap value instead of CODE_REG for lazy deopt.
+  __ pushl(Immediate(kZapCodeReg));
   // Return address for "call" to deopt stub.
   __ pushl(Immediate(kZapReturnAddress));
+  __ movl(CODE_REG,
+          Address(THR, target::Thread::lazy_deopt_from_throw_stub_offset()));
   GenerateDeoptimizationSequence(assembler, kLazyDeoptFromThrow);
   __ ret();
 }
 
 void StubCodeCompiler::GenerateDeoptimizeStub() {
+  __ popl(LikeABI::TMP);
+  __ pushl(CODE_REG);
+  __ pushl(LikeABI::TMP);
+  __ movl(CODE_REG, Address(THR, target::Thread::deoptimize_stub_offset()));
   GenerateDeoptimizationSequence(assembler, kEagerDeopt);
   __ ret();
 }
 
+#if defined(USE_ORIG_IA32)
 static void GenerateNoSuchMethodDispatcherCode(Assembler* assembler) {
   __ EnterStubFrame();
   __ movl(EDX, FieldAddress(
@@ -870,6 +929,7 @@ static void GenerateDispatcherCode(Assembler* assembler,
 void StubCodeCompiler::GenerateNoSuchMethodDispatcherStub() {
   GenerateNoSuchMethodDispatcherCode(assembler);
 }
+#endif
 
 // Called for inline allocation of arrays.
 // Input registers (preserved):
@@ -896,8 +956,7 @@ void StubCodeCompiler::GenerateAllocateArrayStub() {
     __ cmpl(AllocateArrayABI::kLengthReg, max_len);
     __ j(ABOVE, &slow_case);
 
-    NOT_IN_PRODUCT(__ MaybeTraceAllocation(kArrayCid, &slow_case,
-                                           AllocateArrayABI::kResultReg));
+    NOT_IN_PRODUCT(__ MaybeTraceAllocation(kArrayCid, &slow_case));
 
     const intptr_t fixed_size_plus_alignment_padding =
         target::Array::header_size() +
@@ -1023,7 +1082,7 @@ void StubCodeCompiler::GenerateAllocateArrayStub() {
   __ popl(AllocateArrayABI::kTypeArgumentsReg);  // Pop type arguments.
   __ popl(AllocateArrayABI::kLengthReg);         // Pop array length argument.
   __ popl(AllocateArrayABI::kResultReg);  // Pop return value from return slot.
-  __ LeaveFrame();
+  __ LeaveStubFrame();
   __ ret();
 }
 
@@ -1076,12 +1135,13 @@ void StubCodeCompiler::GenerateInvokeDartCodeStub() {
   ASSERT(target::frame_layout.exit_link_slot_from_entry_fp == -8);
   __ movl(EDX, Address(THR, target::Thread::top_exit_frame_info_offset()));
   __ pushl(EDX);
-  __ movl(Address(THR, target::Thread::top_exit_frame_info_offset()),
-          Immediate(0));
 
   // In debug mode, verify that we've pushed the top exit frame info at the
   // correct offset from FP.
   __ EmitEntryFrameVerification();
+
+  __ movl(Address(THR, target::Thread::top_exit_frame_info_offset()),
+          Immediate(0));
 
   // Mark that the thread is executing Dart code. Do this after initializing the
   // exit link for the profiler.
@@ -1123,8 +1183,17 @@ void StubCodeCompiler::GenerateInvokeDartCodeStub() {
   __ Bind(&done_push_arguments);
 
   // Call the dart code entrypoint.
-  __ movl(EAX, Address(EBP, kTargetCodeOffset));
-  __ call(FieldAddress(EAX, target::Code::entry_point_offset()));
+  if (FLAG_precompiled_mode) {
+    __ movl(PP, Address(THR, target::Thread::global_object_pool_offset()));
+    __ movl(CODE_REG, Immediate(0));  // GC-safe value into CODE_REG.
+    __ movl(EAX, Address(EBP, kTargetCodeOffset));
+  } else {
+    __ movl(PP, Immediate(0));  // GC-safe value into PP.
+    __ movl(EAX, Address(EBP, kTargetCodeOffset));
+    __ movl(CODE_REG, EAX);
+    __ movl(EAX, FieldAddress(EAX, target::Code::entry_point_offset()));
+  }
+  __ call(EAX);
 
   // Read the saved number of passed arguments as Smi.
   __ movl(EDX, Address(EBP, kArgumentsDescOffset));
@@ -1148,6 +1217,8 @@ void StubCodeCompiler::GenerateInvokeDartCodeStub() {
   __ popl(EDI);
   __ popl(ESI);
   __ popl(EBX);
+
+  __ set_constant_pool_allowed(false);
 
   // Restore the frame pointer.
   __ LeaveFrame();
@@ -1173,7 +1244,7 @@ static void GenerateAllocateContextSpaceStub(Assembler* assembler,
   __ leal(EBX, Address(EDX, TIMES_4, fixed_size_plus_alignment_padding));
   __ andl(EBX, Immediate(-target::ObjectAlignment::kObjectAlignment));
 
-  NOT_IN_PRODUCT(__ MaybeTraceAllocation(kContextCid, slow_case, EAX));
+  NOT_IN_PRODUCT(__ MaybeTraceAllocation(kContextCid, slow_case));
 
   // Now allocate the object.
   // EDX: number of context variables.
@@ -1187,7 +1258,7 @@ static void GenerateAllocateContextSpaceStub(Assembler* assembler,
 #if defined(DEBUG)
   static auto const kJumpLength = Assembler::kFarJump;
 #else
-  static auto const kJumpLength = Assembler::kNearJump;
+  static auto const kJumpLength = Assembler::kFarJump;
 #endif  // DEBUG
   __ j(ABOVE_EQUAL, slow_case, kJumpLength);
   __ CheckAllocationCanary(EAX);
@@ -1282,7 +1353,7 @@ void StubCodeCompiler::GenerateAllocateContextStub() {
   // Create a stub frame as we are pushing some objects on the stack before
   // calling into the runtime.
   __ EnterStubFrame();
-  __ pushl(Immediate(0));  // Setup space on stack for return value.
+  __ PushObject(NullObject());  // Setup space on stack for return value.
   __ SmiTag(EDX);
   __ pushl(EDX);
   __ CallRuntime(kAllocateContextRuntimeEntry, 1);  // Allocate context.
@@ -1296,7 +1367,7 @@ void StubCodeCompiler::GenerateAllocateContextStub() {
 
   // EAX: new object
   // Restore the frame pointer.
-  __ LeaveFrame();
+  __ LeaveStubFrame();
 
   __ ret();
 }
@@ -1357,7 +1428,7 @@ void StubCodeCompiler::GenerateCloneContextStub() {
   // Create a stub frame as we are pushing some objects on the stack before
   // calling into the runtime.
   __ EnterStubFrame();
-  __ pushl(Immediate(0));  // Setup space on stack for return value.
+  __ PushObject(NullObject());  // Make space on stack for the return value.
   __ pushl(ECX);
   __ CallRuntime(kCloneContextRuntimeEntry, 1);  // Allocate context.
   __ popl(EAX);  // Pop number of context variables argument.
@@ -1370,7 +1441,7 @@ void StubCodeCompiler::GenerateCloneContextStub() {
 
   // EAX: new object
   // Restore the frame pointer.
-  __ LeaveFrame();
+  __ LeaveStubFrame();
   __ ret();
 }
 
@@ -1380,10 +1451,8 @@ void StubCodeCompiler::GenerateWriteBarrierWrappersStub() {
 
     Register reg = static_cast<Register>(i);
     intptr_t start = __ CodeSize();
-    __ pushl(kWriteBarrierObjectReg);
-    __ movl(kWriteBarrierObjectReg, reg);
+    __ movq(kWriteBarrierObjectReg, reg);
     __ call(Address(THR, target::Thread::write_barrier_entry_point_offset()));
-    __ popl(kWriteBarrierObjectReg);
     __ ret();
     intptr_t end = __ CodeSize();
 
@@ -1392,6 +1461,7 @@ void StubCodeCompiler::GenerateWriteBarrierWrappersStub() {
   }
 }
 
+#if defined(USE_ORIG_IA32)
 // Helper stub to implement Assembler::StoreIntoObject/Array.
 // Input parameters:
 //   EDX: Object (old)
@@ -1569,6 +1639,7 @@ static void GenerateWriteBarrierStubHelper(Assembler* assembler, bool cards) {
     __ ret();
   }
 }
+#endif
 
 void StubCodeCompiler::GenerateWriteBarrierStub() {
   GenerateWriteBarrierStubHelper(assembler, false);
@@ -1578,6 +1649,7 @@ void StubCodeCompiler::GenerateArrayWriteBarrierStub() {
   GenerateWriteBarrierStubHelper(assembler, true);
 }
 
+#if defined(USE_ORIG_IA32)
 void StubCodeCompiler::GenerateAllocateObjectStub() {
   __ int3();
 }
@@ -1585,11 +1657,15 @@ void StubCodeCompiler::GenerateAllocateObjectStub() {
 void StubCodeCompiler::GenerateAllocateObjectParameterizedStub() {
   __ int3();
 }
+#endif
 
+#if defined(USE_ORIG_IA32)
 void StubCodeCompiler::GenerateAllocateObjectSlowStub() {
   __ int3();
 }
+#endif
 
+#if defined(USE_ORIG_IA32)
 // Called for inline allocation of objects.
 // Input parameters:
 //   ESP : points to return address.
@@ -1736,6 +1812,7 @@ void StubCodeCompiler::GenerateAllocationStubForClass(
   __ LeaveFrame();
   __ ret();
 }
+#endif
 
 // Called for invoking "dynamic noSuchMethod(Invocation invocation)" function
 // from the entry code of a dart function after an error in passed argument
@@ -1784,6 +1861,10 @@ void StubCodeCompiler::GenerateCallClosureNoSuchMethodStub() {
 // Cannot use function object from ICData as it may be the inlined
 // function and not the top-scope function.
 void StubCodeCompiler::GenerateOptimizedUsageCounterIncrement() {
+  if (FLAG_precompiled_mode) {
+    __ Breakpoint();
+    return;
+  }
   Register ic_reg = ECX;
   Register func_reg = EAX;
   if (FLAG_trace_optimized_ic_calls) {
@@ -1797,22 +1878,30 @@ void StubCodeCompiler::GenerateOptimizedUsageCounterIncrement() {
     __ popl(EAX);       // Discard argument;
     __ popl(ic_reg);    // Restore.
     __ popl(func_reg);  // Restore.
-    __ LeaveFrame();
+    __ LeaveStubFrame();
   }
   __ incl(FieldAddress(func_reg, target::Function::usage_counter_offset()));
 }
 
 // Loads function into 'temp_reg'.
-void StubCodeCompiler::GenerateUsageCounterIncrement(Register temp_reg) {
+template <typename T>
+void StubCodeCompiler::GenerateUsageCounterIncrement(T temp_reg) {
+  if (FLAG_precompiled_mode) {
+    __ Breakpoint();
+    return;
+  }
   if (FLAG_optimization_counter_threshold >= 0) {
-    Register func_reg = temp_reg;
-    ASSERT(func_reg != IC_DATA_REG);
+    T func_reg = temp_reg;
+    // ASSERT(func_reg != IC_DATA_REG);
     __ Comment("Increment function counter");
     __ movl(func_reg,
             FieldAddress(IC_DATA_REG, target::ICData::owner_offset()));
     __ incl(FieldAddress(func_reg, target::Function::usage_counter_offset()));
   }
 }
+
+template void StubCodeCompiler::GenerateUsageCounterIncrement<
+    dart::compiler::LikeABI>(dart::compiler::LikeABI temp_reg);
 
 // Note: ECX must be preserved.
 // Attempt a quick Smi operation for known operations ('kind'). The ICData
@@ -1887,6 +1976,7 @@ static void EmitFastSmiOp(Assembler* assembler,
   __ ret();
 }
 
+#if defined(USE_ORIG_IA32)
 // Generate inline cache check for 'num_args'.
 //  EBX: receiver (if instance call)
 //  ECX: ICData
@@ -2148,6 +2238,7 @@ void StubCodeCompiler::GenerateNArgsCheckInlineCacheStubForEntryKind(
   }
 #endif
 }
+#endif
 
 // EBX: receiver
 // ECX: ICData
@@ -2158,6 +2249,7 @@ void StubCodeCompiler::GenerateOneArgCheckInlineCacheStub() {
       kUnoptimized, kInstanceCall, kIgnoreExactness);
 }
 
+#if defined(USE_ORIG_IA32)
 // EBX: receiver
 // ECX: ICData
 // ESP[0]: return address
@@ -2166,14 +2258,19 @@ void StubCodeCompiler::GenerateOneArgCheckInlineCacheWithExactnessCheckStub() {
       1, kInlineCacheMissHandlerOneArgRuntimeEntry, Token::kILLEGAL,
       kUnoptimized, kInstanceCall, kCheckExactness);
 }
+#endif
 
+#if defined(USE_ORIG_IA32)
 void StubCodeCompiler::GenerateAllocateMintSharedWithFPURegsStub() {
   __ Stop("Unimplemented");
 }
+#endif
 
+#if defined(USE_ORIG_IA32)
 void StubCodeCompiler::GenerateAllocateMintSharedWithoutFPURegsStub() {
   __ Stop("Unimplemented");
 }
+#endif
 
 // EBX: receiver
 // ECX: ICData
@@ -2221,6 +2318,7 @@ void StubCodeCompiler::GenerateOneArgOptimizedCheckInlineCacheStub() {
       kInstanceCall, kIgnoreExactness);
 }
 
+#if defined(USE_ORIG_IA32)
 // EBX: receiver
 // ECX: ICData
 // EAX: Function
@@ -2231,6 +2329,7 @@ void StubCodeCompiler::
       1, kInlineCacheMissHandlerOneArgRuntimeEntry, Token::kILLEGAL, kOptimized,
       kInstanceCall, kCheckExactness);
 }
+#endif
 
 // EBX: receiver
 // ECX: ICData
@@ -2310,6 +2409,7 @@ static void GenerateZeroArgsUnoptimizedStaticCallForEntryKind(
 #endif
 }
 
+#if defined(USE_ORIG_IA32)
 void StubCodeCompiler::GenerateZeroArgsUnoptimizedStaticCallStub() {
   GenerateZeroArgsUnoptimizedStaticCallForEntryKind(this,
                                                     CodeEntryKind::kNormal);
@@ -2317,6 +2417,7 @@ void StubCodeCompiler::GenerateZeroArgsUnoptimizedStaticCallStub() {
   GenerateZeroArgsUnoptimizedStaticCallForEntryKind(this,
                                                     CodeEntryKind::kUnchecked);
 }
+#endif
 
 // ECX: ICData
 // ESP[0]: return address
@@ -2344,8 +2445,10 @@ void StubCodeCompiler::GenerateLazyCompileStub() {
   __ CallRuntime(kCompileFunctionRuntimeEntry, 1);
   __ popl(FUNCTION_REG);   // Restore function.
   __ popl(ARGS_DESC_REG);  // Restore arguments descriptor array.
-  __ LeaveFrame();
+  __ LeaveStubFrame();
 
+  __ LoadCompressed(
+      CODE_REG, FieldAddress(FUNCTION_REG, target::Function::code_offset()));
   __ jmp(FieldAddress(FUNCTION_REG, target::Function::entry_point_offset()));
 }
 
@@ -2359,12 +2462,12 @@ void StubCodeCompiler::GenerateICCallBreakpointStub() {
   __ pushl(ECX);           // Preserve ICData.
   __ pushl(Immediate(0));  // Room for result.
   __ CallRuntime(kBreakpointRuntimeHandlerRuntimeEntry, 0);
-  __ popl(EAX);  // Code of original stub.
+  __ popl(CODE_REG);  // Original stub.
   __ popl(ECX);  // Restore ICData.
   __ popl(EBX);  // Restore receiver.
-  __ LeaveFrame();
+  __ LeaveStubFrame();
   // Jump to original stub.
-  __ jmp(FieldAddress(EAX, target::Code::entry_point_offset()));
+  __ jmp(FieldAddress(CODE_REG, target::Code::entry_point_offset()));
 #endif  // defined(PRODUCT)
 }
 
@@ -2376,11 +2479,11 @@ void StubCodeCompiler::GenerateUnoptStaticCallBreakpointStub() {
   __ pushl(ECX);           // Preserve ICData.
   __ pushl(Immediate(0));  // Room for result.
   __ CallRuntime(kBreakpointRuntimeHandlerRuntimeEntry, 0);
-  __ popl(EAX);  // Code of original stub.
+  __ popl(CODE_REG);  // Original stub.
   __ popl(ECX);  // Restore ICData.
-  __ LeaveFrame();
+  __ LeaveStubFrame();
   // Jump to original stub.
-  __ jmp(FieldAddress(EAX, target::Code::entry_point_offset()));
+  __ jmp(FieldAddress(CODE_REG, target::Code::entry_point_offset()));
 #endif  // defined(PRODUCT)
 }
 
@@ -2393,10 +2496,10 @@ void StubCodeCompiler::GenerateRuntimeCallBreakpointStub() {
   // unpatched runtime stub.
   __ pushl(Immediate(0));  // Room for result.
   __ CallRuntime(kBreakpointRuntimeHandlerRuntimeEntry, 0);
-  __ popl(EAX);  // Code of the original stub
-  __ LeaveFrame();
+  __ popl(CODE_REG);  // Original stub.
+  __ LeaveStubFrame();
   // Jump to original stub.
-  __ jmp(FieldAddress(EAX, target::Code::entry_point_offset()));
+  __ jmp(FieldAddress(CODE_REG, target::Code::entry_point_offset()));
 #endif  // defined(PRODUCT)
 }
 
@@ -2417,11 +2520,12 @@ void StubCodeCompiler::GenerateDebugStepCheckStub() {
   __ Bind(&stepping);
   __ EnterStubFrame();
   __ CallRuntime(kSingleStepHandlerRuntimeEntry, 0);
-  __ LeaveFrame();
+  __ LeaveStubFrame();
   __ jmp(&done_stepping, Assembler::kNearJump);
 #endif  // defined(PRODUCT)
 }
 
+#if defined(USE_ORIG_IA32)
 // Constants used for generating subtype test cache lookup stubs.
 // We represent the depth of as a depth from the top of the stack at the
 // start of the stub. That is, depths for input values are non-negative and
@@ -2542,7 +2646,9 @@ static void GenerateSubtypeTestCacheLoop(
                    STCInternal::kDestinationTypeDepth);
   __ j(EQUAL, found, Assembler::kNearJump);
 }
+#endif
 
+#if defined(USE_ORIG_IA32)
 // Used to check class and type arguments. Arguments passed on stack:
 // TOS + 0: return address.
 // TOS + 1: function type arguments (only used if n >= 4, can be raw_null).
@@ -2726,6 +2832,7 @@ void StubCodeCompiler::GenerateSubtypeNTestCacheStub(Assembler* assembler,
   __ movl(TypeTestABI::kSubtypeTestCacheResultReg, raw_null);
   __ ret();
 }
+#endif
 
 // Return the current stack pointer address, used to do stack alignment checks.
 // TOS + 0: return address
@@ -2774,6 +2881,13 @@ void StubCodeCompiler::GenerateJumpToFrameStub() {
   // Clear top exit frame.
   __ movl(Address(THR, target::Thread::top_exit_frame_info_offset()),
           Immediate(0));
+  // Restore the pool pointer.
+  __ RestoreCodePointer();
+  if (FLAG_precompiled_mode) {
+    __ movl(PP, Address(THR, target::Thread::global_object_pool_offset()));
+  } else {
+    __ LoadPoolPointer(PP);
+  }
   __ jmp(EBX);  // Jump to the exception handler code.
 }
 
@@ -2806,6 +2920,7 @@ void StubCodeCompiler::GenerateRunExceptionHandlerStub() {
 // The arguments are stored in the Thread object.
 // No result.
 void StubCodeCompiler::GenerateDeoptForRewindStub() {
+  __ pushl(Immediate(kZapCodeReg));
   // Push the deopt pc.
   __ pushl(Address(THR, target::Thread::resume_pc_offset()));
   GenerateDeoptimizationSequence(assembler, kEagerDeopt);
@@ -2813,7 +2928,7 @@ void StubCodeCompiler::GenerateDeoptForRewindStub() {
   // After we have deoptimized, jump to the correct frame.
   __ EnterStubFrame();
   __ CallRuntime(kRewindPostDeoptRuntimeEntry, 0);
-  __ LeaveFrame();
+  __ LeaveStubFrame();
   __ int3();
 }
 
@@ -2830,7 +2945,7 @@ void StubCodeCompiler::GenerateOptimizeFunctionStub() {
   __ popl(EAX);  // Discard argument.
   __ popl(FUNCTION_REG);   // Get Function object
   __ popl(ARGS_DESC_REG);  // Restore argument descriptor.
-  __ LeaveFrame();
+  __ LeaveStubFrame();
   __ movl(CODE_REG,
           FieldAddress(FUNCTION_REG, target::Function::code_offset()));
   __ jmp(FieldAddress(FUNCTION_REG, target::Function::entry_point_offset()));
@@ -2887,7 +3002,7 @@ static void GenerateIdenticalWithNumberCheckStub(Assembler* assembler,
   __ jmp(&done, Assembler::kNearJump);
 
   __ Bind(&reference_compare);
-  __ cmpl(left, right);
+  __ CompareObjectRegisters(left, right);
   __ Bind(&done);
 }
 
@@ -2919,7 +3034,8 @@ void StubCodeCompiler::GenerateUnoptimizedIdenticalWithNumberCheckStub() {
   __ Bind(&stepping);
   __ EnterStubFrame();
   __ CallRuntime(kSingleStepHandlerRuntimeEntry, 0);
-  __ LeaveFrame();
+  __ RestoreCodePointer();
+  __ LeaveStubFrame();
   __ jmp(&done_stepping);
 #endif
 }
@@ -2997,6 +3113,12 @@ void StubCodeCompiler::GenerateMegamorphicCallStub() {
   __ movl(ARGS_DESC_REG,
           FieldAddress(IC_DATA_REG,
                        target::CallSiteData::arguments_descriptor_offset()));
+
+  if (!FLAG_precompiled_mode) {
+    __ LoadCompressed(
+        CODE_REG, FieldAddress(FUNCTION_REG, target::Function::code_offset()));
+  }
+
   __ popl(EBX);  // restore receiver
   __ jmp(FieldAddress(FUNCTION_REG, target::Function::entry_point_offset()));
 
@@ -3021,13 +3143,17 @@ void StubCodeCompiler::GenerateMegamorphicCallStub() {
   GenerateSwitchableCallMissStub();
 }
 
+#if defined(USE_ORIG_IA32)
 void StubCodeCompiler::GenerateICCallThroughCodeStub() {
   __ int3();  // AOT only.
 }
+#endif
 
+#if defined(USE_ORIG_IA32)
 void StubCodeCompiler::GenerateMonomorphicSmiableCheckStub() {
   __ int3();  // AOT only.
 }
+#endif
 
 // Called from switchable IC calls.
 //  EBX: receiver
@@ -3046,16 +3172,18 @@ void StubCodeCompiler::GenerateSwitchableCallMissStub() {
   __ popl(ECX);       // result = IC
 
   __ popl(EBX);  // Restore receiver.
-  __ LeaveFrame();
+  __ LeaveStubFrame();
 
   __ movl(EAX, FieldAddress(CODE_REG, target::Code::entry_point_offset(
                                           CodeEntryKind::kNormal)));
   __ jmp(EAX);
 }
 
+#if defined(USE_ORIG_IA32)
 void StubCodeCompiler::GenerateSingleTargetCallStub() {
   __ int3();  // AOT only.
 }
+#endif
 
 static ScaleFactor GetScaleFactor(intptr_t size) {
   switch (size) {
@@ -3088,7 +3216,7 @@ void StubCodeCompiler::GenerateAllocateTypedDataArrayStub(intptr_t cid) {
     Label call_runtime;
     __ pushl(AllocateTypedDataArrayABI::kLengthReg);
 
-    NOT_IN_PRODUCT(__ MaybeTraceAllocation(cid, &call_runtime, ECX));
+    NOT_IN_PRODUCT(__ MaybeTraceAllocation(cid, &call_runtime));
     __ movl(EDI, AllocateTypedDataArrayABI::kLengthReg);
     /* Check that length is a positive Smi. */
     /* EDI: requested array length argument. */

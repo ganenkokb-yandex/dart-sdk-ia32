@@ -425,6 +425,12 @@ def GetGitRevision(git_revision_file=None, repo_path=DART_DIR):
 
 
 def GetShortGitHash(repo_path=DART_DIR):
+    try:
+        git_revision_file = os.path.join(repo_path, 'tools', 'GIT_REVISION')
+        with open(git_revision_file) as fd:
+            return fd.read().strip()[:10]
+    except:
+        pass
     p = subprocess.Popen(['git', 'rev-parse', '--short=10', 'HEAD'],
                          stdout=subprocess.PIPE,
                          stderr=subprocess.PIPE,

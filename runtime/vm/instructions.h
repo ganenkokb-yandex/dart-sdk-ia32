@@ -29,7 +29,7 @@ class Code;
 bool ObjectAtPoolIndex(const Code& code, intptr_t index, Object* obj);
 bool DecodeLoadObjectFromPoolOrThread(uword pc, const Code& code, Object* obj);
 
-#if !defined(TARGET_ARCH_IA32)
+#if !defined(TARGET_ARCH_IA32_UNDEFINED)
 
 class TypeTestingStubCallPattern : public ValueObject {
  public:
@@ -41,7 +41,7 @@ class TypeTestingStubCallPattern : public ValueObject {
   const uword pc_;
 };
 
-#endif  // !defined(TARGET_ARCH_IA32)
+#endif  // !defined(TARGET_ARCH_IA32_UNDEFINED)
 
 }  // namespace dart
 

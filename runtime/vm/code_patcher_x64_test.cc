@@ -45,7 +45,9 @@ ASSEMBLER_TEST_GENERATE(IcDataAccess, assembler) {
   // Code accessing pp is generated, but not executed. Uninitialized pp is OK.
   __ set_constant_pool_allowed(true);
 
+  ASSERT(RBX == IC_DATA_REG);
   __ LoadObject(RBX, ic_data);
+  __ movq(compiler::LikeABI::AllocateClosureABI_kFunctionReg, IC_DATA_REG);
   __ CallPatchable(StubCode::OneArgCheckInlineCache());
   __ ret();
 }

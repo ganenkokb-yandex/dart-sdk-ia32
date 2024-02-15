@@ -141,7 +141,7 @@ struct GrowableArrayStorageTraits {
 };
 }  // namespace
 
-#if defined(DART_PRECOMPILER) && !defined(TARGET_ARCH_IA32)
+#if defined(DART_PRECOMPILER) && !defined(TARGET_ARCH_IA32_UNDEFINED)
 
 static void RelocateCodeObjects(
     bool is_vm,
@@ -155,7 +155,7 @@ static void RelocateCodeObjects(
   CodeRelocator::Relocate(thread, code_objects, image_writer_commands, is_vm);
 }
 
-#endif  // defined(DART_PRECOMPILER) && !defined(TARGET_ARCH_IA32)
+#endif  // defined(DART_PRECOMPILER) && !defined(TARGET_ARCH_IA32_UNDEFINED)
 
 class SerializationCluster : public ZoneAllocated {
  public:
@@ -8044,7 +8044,7 @@ void Serializer::PrepareInstructions(
     }
   }
 
-#if defined(DART_PRECOMPILER) && !defined(TARGET_ARCH_IA32)
+#if defined(DART_PRECOMPILER) && !defined(TARGET_ARCH_IA32_UNDEFINED)
   if (kind() == Snapshot::kFullAOT) {
     // Group the code objects whose instructions are not being deferred in this
     // snapshot unit in the order they will be written: first the code objects
@@ -8228,7 +8228,7 @@ void Serializer::PrepareInstructions(
           {offset_space, instructions_table_rodata_offset_});
     }
   }
-#endif  // defined(DART_PRECOMPILER) && !defined(TARGET_ARCH_IA32)
+#endif  // defined(DART_PRECOMPILER) && !defined(TARGET_ARCH_IA32_UNDEFINED)
 }
 
 void Serializer::WriteInstructions(InstructionsPtr instr,

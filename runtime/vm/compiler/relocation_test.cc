@@ -16,7 +16,7 @@
 
 namespace dart {
 
-#if defined(DART_PRECOMPILER) && !defined(TARGET_ARCH_IA32)
+#if defined(DART_PRECOMPILER) && !defined(TARGET_ARCH_IA32_UNDEFINED)
 
 DECLARE_FLAG(bool, dual_map_code);
 DECLARE_FLAG(int, lower_pc_relative_call_distance);
@@ -87,6 +87,8 @@ struct RelocatorTestHelper {
           __ stp(LR, R1,
                  compiler::Address(CSP, -2 * kWordSize,
                                    compiler::Address::PairPreIndex)));
+#elif defined(TARGET_ARCH_IA32)
+          __ PushRegister(EAX);
 #elif defined(TARGET_ARCH_ARM)
       SPILLS_RETURN_ADDRESS_FROM_LR_TO_REGISTER(__ PushList((1 << LR)));
 #elif defined(TARGET_ARCH_RISCV32) || defined(TARGET_ARCH_RISCV64)
@@ -99,6 +101,8 @@ struct RelocatorTestHelper {
           __ ldp(LR, R1,
                  compiler::Address(CSP, 2 * kWordSize,
                                    compiler::Address::PairPostIndex)));
+#elif defined(TARGET_ARCH_IA32)
+          __ PopRegister(EAX);
 #elif defined(TARGET_ARCH_ARM)
       RESTORES_RETURN_ADDRESS_FROM_REGISTER_TO_LR(__ PopList((1 << LR)));
 #elif defined(TARGET_ARCH_RISCV32) || defined(TARGET_ARCH_RISCV64)
@@ -113,6 +117,8 @@ struct RelocatorTestHelper {
     EmitCodeFor(code, [&](compiler::Assembler* assembler) {
 #if defined(TARGET_ARCH_X64)
       __ LoadImmediate(RAX, 42);
+#elif defined(TARGET_ARCH_IA32)
+      __ LoadImmediate(EAX, 42);
 #elif defined(TARGET_ARCH_ARM) || defined(TARGET_ARCH_ARM64)
       __ LoadImmediate(R0, 42);
 #elif defined(TARGET_ARCH_RISCV32) || defined(TARGET_ARCH_RISCV64)
@@ -465,6 +471,6 @@ UNIT_TEST_CASE(PCRelativeCallPatterns) {
   }
 }
 
-#endif  // defined(DART_PRECOMPILER) && !defined(TARGET_ARCH_IA32)
+#endif  // defined(DART_PRECOMPILER) && !defined(TARGET_ARCH_IA32_UNDEFINED)
 
 }  // namespace dart

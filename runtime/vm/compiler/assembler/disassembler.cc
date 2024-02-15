@@ -214,7 +214,7 @@ void Disassembler::DisassembleCodeHelper(const char* function_fullname,
   code.Disassemble();
   THR_Print("}\n");
 
-#if defined(TARGET_ARCH_IA32)
+#if defined(TARGET_ARCH_IA32_UNDEFINED)
   THR_Print("Pointer offsets for function: {\n");
   // Pointer offsets are stored in descending order.
   Object& obj = Object::Handle(zone);

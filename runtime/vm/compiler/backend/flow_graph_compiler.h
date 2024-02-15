@@ -529,7 +529,7 @@ class FlowGraphCompiler : public ValueObject {
                                 const String& dst_name,
                                 LocationSummary* locs);
 
-#if !defined(TARGET_ARCH_IA32)
+#if !defined(TARGET_ARCH_IA32_UNDEFINED)
   void GenerateCallerChecksForAssertAssignable(CompileType* receiver_type,
                                                const AbstractType& dst_type,
                                                compiler::Label* done);
@@ -537,13 +537,13 @@ class FlowGraphCompiler : public ValueObject {
   void GenerateTTSCall(const InstructionSource& source,
                        intptr_t deopt_id,
                        Environment* env,
-                       Register reg_with_type,
+                       compiler::LikeABI reg_with_type,
                        const AbstractType& dst_type,
                        const String& dst_name,
                        LocationSummary* locs);
 
   static void GenerateIndirectTTSCall(compiler::Assembler* assembler,
-                                      Register reg_with_type,
+                                      compiler::LikeABI reg_with_type,
                                       intptr_t sub_type_cache_index);
 #endif
 
@@ -602,20 +602,20 @@ class FlowGraphCompiler : public ValueObject {
       ICData::RebindRule rebind_rule,
       Code::EntryKind entry_kind = Code::EntryKind::kNormal);
 
-  void GenerateNumberTypeCheck(Register kClassIdReg,
+  void GenerateNumberTypeCheck(compiler::LikeABI kClassIdReg,
                                const AbstractType& type,
                                compiler::Label* is_instance_lbl,
                                compiler::Label* is_not_instance_lbl);
-  void GenerateStringTypeCheck(Register kClassIdReg,
+  void GenerateStringTypeCheck(compiler::LikeABI kClassIdReg,
                                compiler::Label* is_instance_lbl,
                                compiler::Label* is_not_instance_lbl);
-  void GenerateListTypeCheck(Register kClassIdReg,
+  void GenerateListTypeCheck(compiler::LikeABI kClassIdReg,
                              compiler::Label* is_instance_lbl);
 
   // Returns true if no further checks are necessary but the code coming after
   // the emitted code here is still required do a runtime call (for the negative
   // case of throwing an exception).
-  bool GenerateSubtypeRangeCheck(Register class_id_reg,
+  bool GenerateSubtypeRangeCheck(compiler::LikeABI class_id_reg,
                                  const Class& type_class,
                                  compiler::Label* is_subtype_lbl);
 
@@ -629,9 +629,10 @@ class FlowGraphCompiler : public ValueObject {
   // the range.
   //
   // Returns whether [class_id_reg] is clobbered by the check.
+  template <typename T>
   static bool GenerateCidRangesCheck(
       compiler::Assembler* assembler,
-      Register class_id_reg,
+      T class_id_reg,
       const CidRangeVector& cid_ranges,
       compiler::Label* inside_range_lbl,
       compiler::Label* outside_range_lbl = nullptr,
@@ -713,6 +714,9 @@ class FlowGraphCompiler : public ValueObject {
                                       const InstructionSource& source,
                                       intptr_t deopt_id);
   Condition EmitBoolTest(Register value, BranchLabels labels, bool invert);
+  Condition EmitBoolTest(dart::compiler::LikeABI value,
+                         BranchLabels labels,
+                         bool invert);
 
   bool NeedsEdgeCounter(BlockEntryInstr* block);
 
@@ -905,9 +909,10 @@ class FlowGraphCompiler : public ValueObject {
   // Returns new class-id bias.
   //
   // TODO(kustermann): We should move this code out of the [FlowGraphCompiler]!
+  template <typename T>
   static int EmitTestAndCallCheckCid(compiler::Assembler* assembler,
                                      compiler::Label* label,
-                                     Register class_id_reg,
+                                     T class_id_reg,
                                      const CidRangeValue& range,
                                      int bias,
                                      bool jump_on_miss = true);
@@ -981,7 +986,7 @@ class FlowGraphCompiler : public ValueObject {
   void EmitTestAndCallLoadCid(Register class_id_reg);
 
   // Type checking helper methods.
-  void CheckClassIds(Register class_id_reg,
+  void CheckClassIds(compiler::LikeABI class_id_reg,
                      const GrowableArray<intptr_t>& class_ids,
                      compiler::Label* is_instance_lbl,
                      compiler::Label* is_not_instance_lbl);
@@ -1059,7 +1064,7 @@ class FlowGraphCompiler : public ValueObject {
       compiler::Label* is_instance_lbl,
       compiler::Label* is_not_instance_lbl);
 
-  void GenerateBoolToJump(Register bool_reg,
+  void GenerateBoolToJump(compiler::LikeABI bool_reg,
                           compiler::Label* is_true,
                           compiler::Label* is_false);
 

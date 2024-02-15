@@ -86,6 +86,14 @@ static constexpr bool IsCalleeSavedRegister(Register reg) {
   return ((1 << reg) & CallingConventions::kCalleeSaveCpuRegisters) != 0;
 }
 
+template <int N = 1024>
+class MemoryPool {
+  uint8_t pool_[N] = {};
+};
+
+// Use last part of memory pool as reserved for global enum.
+static const int kReservedMemoryOffset = 512;
+
 #if !defined(TARGET_ARCH_IA32)
 constexpr bool IsAbiPreservedRegister(Register reg) {
   return (kAbiPreservedCpuRegs & (1 << reg)) != 0;

@@ -6533,7 +6533,7 @@ DART_EXPORT Dart_Handle Dart_SortClasses() {
 }
 
 DART_EXPORT Dart_Handle Dart_Precompile() {
-#if defined(TARGET_ARCH_IA32)
+#if defined(TARGET_ARCH_IA32_UNDEFINED)
   return Api::NewError("AOT compilation is not supported on IA32.");
 #elif !defined(DART_PRECOMPILER)
   return Api::NewError(
@@ -6557,7 +6557,7 @@ DART_EXPORT Dart_Handle Dart_Precompile() {
 }
 
 // Used for StreamingWriteStream/BlobImageWriter sizes for ELF and blobs.
-#if !defined(TARGET_ARCH_IA32) && defined(DART_PRECOMPILER)
+#if !defined(TARGET_ARCH_IA32_UNDEFINED) && defined(DART_PRECOMPILER)
 static constexpr intptr_t kAssemblyInitialSize = 512 * KB;
 static constexpr intptr_t kInitialSize = 2 * MB;
 static constexpr intptr_t kInitialDebugSize = 1 * MB;
@@ -6699,7 +6699,7 @@ Dart_CreateAppAOTSnapshotAsAssembly(Dart_StreamingWriteCallback callback,
                                     void* callback_data,
                                     bool strip,
                                     void* debug_callback_data) {
-#if defined(TARGET_ARCH_IA32)
+#if defined(TARGET_ARCH_IA32_UNDEFINED)
   return Api::NewError("AOT compilation is not supported on IA32.");
 #elif defined(DART_TARGET_OS_WINDOWS)
   return Api::NewError("Assembly generation is not implemented for Windows.");
@@ -6727,7 +6727,7 @@ DART_EXPORT Dart_Handle Dart_CreateAppAOTSnapshotAsAssemblies(
     bool strip,
     Dart_StreamingWriteCallback write_callback,
     Dart_StreamingCloseCallback close_callback) {
-#if defined(TARGET_ARCH_IA32)
+#if defined(TARGET_ARCH_IA32_UNDEFINED)
   return Api::NewError("AOT compilation is not supported on IA32.");
 #elif defined(DART_TARGET_OS_WINDOWS)
   return Api::NewError("Assembly generation is not implemented for Windows.");
@@ -6751,7 +6751,7 @@ DART_EXPORT Dart_Handle Dart_CreateAppAOTSnapshotAsAssemblies(
 DART_EXPORT Dart_Handle
 Dart_CreateVMAOTSnapshotAsAssembly(Dart_StreamingWriteCallback callback,
                                    void* callback_data) {
-#if defined(TARGET_ARCH_IA32)
+#if defined(TARGET_ARCH_IA32_UNDEFINED)
   return Api::NewError("AOT compilation is not supported on IA32.");
 #elif defined(DART_TARGET_OS_WINDOWS)
   return Api::NewError("Assembly generation is not implemented for Windows.");
@@ -6782,7 +6782,7 @@ Dart_CreateAppAOTSnapshotAsElf(Dart_StreamingWriteCallback callback,
                                void* callback_data,
                                bool strip,
                                void* debug_callback_data) {
-#if defined(TARGET_ARCH_IA32)
+#if defined(TARGET_ARCH_IA32_UNDEFINED)
   return Api::NewError("AOT compilation is not supported on IA32.");
 #elif !defined(DART_PRECOMPILER)
   return Api::NewError(
@@ -6808,7 +6808,7 @@ Dart_CreateAppAOTSnapshotAsElfs(Dart_CreateLoadingUnitCallback next_callback,
                                 bool strip,
                                 Dart_StreamingWriteCallback write_callback,
                                 Dart_StreamingCloseCallback close_callback) {
-#if defined(TARGET_ARCH_IA32)
+#if defined(TARGET_ARCH_IA32_UNDEFINED)
   return Api::NewError("AOT compilation is not supported on IA32.");
 #elif !defined(DART_PRECOMPILER)
   return Api::NewError(
@@ -6828,7 +6828,7 @@ Dart_CreateAppAOTSnapshotAsElfs(Dart_CreateLoadingUnitCallback next_callback,
 }
 
 DART_EXPORT Dart_Handle Dart_LoadingUnitLibraryUris(intptr_t loading_unit_id) {
-#if defined(TARGET_ARCH_IA32)
+#if defined(TARGET_ARCH_IA32_UNDEFINED)
   return Api::NewError("AOT compilation is not supported on IA32.");
 #elif !defined(DART_PRECOMPILER)
   return Api::NewError(
@@ -6846,7 +6846,7 @@ DART_EXPORT Dart_Handle Dart_LoadingUnitLibraryUris(intptr_t loading_unit_id) {
 #endif
 }
 
-#if (!defined(TARGET_ARCH_IA32) && !defined(DART_PRECOMPILED_RUNTIME))
+#if (!defined(TARGET_ARCH_IA32_UNDEFINED) && !defined(DART_PRECOMPILED_RUNTIME))
 
 // Any flag that affects how we compile code might cause a problem when the
 // snapshot writer generates code with one value of the flag and the snapshot
@@ -6892,7 +6892,7 @@ static void DropRegExpMatchCode(Zone* zone) {
   ASSERT(!func.HasCode());
 }
 
-#endif  // (!defined(TARGET_ARCH_IA32) && !defined(DART_PRECOMPILED_RUNTIME))
+#endif  // (!defined(TARGET_ARCH_IA32_UNDEFINED) && !defined(DART_PRECOMPILED_RUNTIME))
 
 DART_EXPORT Dart_Handle Dart_CreateCoreJITSnapshotAsBlobs(
     uint8_t** vm_snapshot_data_buffer,
@@ -6903,7 +6903,7 @@ DART_EXPORT Dart_Handle Dart_CreateCoreJITSnapshotAsBlobs(
     intptr_t* isolate_snapshot_data_size,
     uint8_t** isolate_snapshot_instructions_buffer,
     intptr_t* isolate_snapshot_instructions_size) {
-#if defined(TARGET_ARCH_IA32)
+#if defined(TARGET_ARCH_IA32_UNDEFINED)
   return Api::NewError("Snapshots with code are not supported on IA32.");
 #elif defined(DART_PRECOMPILED_RUNTIME)
   return Api::NewError("JIT app snapshots cannot be taken from an AOT runtime");
@@ -6962,7 +6962,7 @@ DART_EXPORT Dart_Handle Dart_CreateCoreJITSnapshotAsBlobs(
 #endif
 }
 
-#if !defined(TARGET_ARCH_IA32) && !defined(DART_PRECOMPILED_RUNTIME)
+#if !defined(TARGET_ARCH_IA32_UNDEFINED) && !defined(DART_PRECOMPILED_RUNTIME)
 static void KillNonMainIsolatesSlow(Thread* thread, Isolate* main_isolate) {
   auto group = main_isolate->group();
   while (true) {
@@ -6984,14 +6984,14 @@ static void KillNonMainIsolatesSlow(Thread* thread, Isolate* main_isolate) {
     OS::SleepMicros(10 * 1000);
   }
 }
-#endif  // !defined(TARGET_ARCH_IA32) && !defined(DART_PRECOMPILED_RUNTIME)
+#endif  // !defined(TARGET_ARCH_IA32_UNDEFINED) && !defined(DART_PRECOMPILED_RUNTIME)
 
 DART_EXPORT Dart_Handle
 Dart_CreateAppJITSnapshotAsBlobs(uint8_t** isolate_snapshot_data_buffer,
                                  intptr_t* isolate_snapshot_data_size,
                                  uint8_t** isolate_snapshot_instructions_buffer,
                                  intptr_t* isolate_snapshot_instructions_size) {
-#if defined(TARGET_ARCH_IA32)
+#if defined(TARGET_ARCH_IA32_UNDEFINED)
   return Api::NewError("Snapshots with code are not supported on IA32.");
 #elif defined(DART_PRECOMPILED_RUNTIME)
   return Api::NewError("JIT app snapshots cannot be taken from an AOT runtime");

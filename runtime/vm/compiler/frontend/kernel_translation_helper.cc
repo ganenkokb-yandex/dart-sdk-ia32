@@ -146,7 +146,7 @@ uint8_t* TranslationHelper::StringBuffer(StringIndex string_index) const {
   // store of the string_data_ table.  Though this is safe in C++ as long as the
   // address is not dereferenced, it will trigger the assert in
   // ExternalTypedData::DataAddr.
-  ASSERT(Thread::Current()->no_safepoint_scope_depth() > 0);
+  DEBUG_ASSERT(Thread::Current()->no_safepoint_scope_depth() > 0);
   return reinterpret_cast<uint8_t*>(string_data_.DataAddr(0)) +
          StringOffset(string_index);
 }

@@ -875,7 +875,7 @@ static void PrintTypeCheck(const char* message,
   }
 }
 
-#if defined(TARGET_ARCH_IA32)
+#if defined(TARGET_ARCH_IA32_UNDEFINED)
 static BoolPtr CheckHashBasedSubtypeTestCache(
     Zone* zone,
     Thread* thread,
@@ -927,7 +927,7 @@ static BoolPtr CheckHashBasedSubtypeTestCache(
 
   return Bool::null();
 }
-#endif  // defined(TARGET_ARCH_IA32)
+#endif  // defined(TARGET_ARCH_IA32_UNDEFINED)
 
 // This updates the type test cache, an array containing 8 elements:
 // - instance class (or function if the instance is a closure)
@@ -1094,7 +1094,7 @@ DEFINE_RUNTIME_ENTRY(Instanceof, 5) {
   ASSERT(type.IsFinalized());
   ASSERT(!type.IsDynamicType());  // No need to check assignment.
   ASSERT(!cache.IsNull());
-#if defined(TARGET_ARCH_IA32)
+#if defined(TARGET_ARCH_IA32_UNDEFINED)
   // Hash-based caches are still not handled by the stubs on IA32.
   if (cache.IsHash()) {
     const auto& result = Bool::Handle(
@@ -1107,7 +1107,7 @@ DEFINE_RUNTIME_ENTRY(Instanceof, 5) {
       return;
     }
   }
-#endif  // defined(TARGET_ARCH_IA32)
+#endif  // defined(TARGET_ARCH_IA32_UNDEFINED)
   const Bool& result = Bool::Get(instance.IsInstanceOf(
       type, instantiator_type_arguments, function_type_arguments));
   if (FLAG_trace_type_checks) {
@@ -1160,7 +1160,7 @@ DEFINE_RUNTIME_ENTRY(TypeCheck, 7) {
   TESTING_runtime_entered_on_TTS_invocation = true;
 #endif
 
-#if defined(TARGET_ARCH_IA32)
+#if defined(TARGET_ARCH_IA32_UNDEFINED)
   ASSERT(mode == kTypeCheckFromInline);
   // Hash-based caches are still not handled by the stubs on IA32.
   if (cache.IsHash()) {
@@ -1174,7 +1174,7 @@ DEFINE_RUNTIME_ENTRY(TypeCheck, 7) {
       return;
     }
   }
-#endif  // defined(TARGET_ARCH_IA32)
+#endif  // defined(TARGET_ARCH_IA32_UNDEFINED)
 
   // These are guaranteed on the calling side.
   ASSERT(!dst_type.IsDynamicType());
@@ -1195,7 +1195,7 @@ DEFINE_RUNTIME_ENTRY(TypeCheck, 7) {
   // so only walk the stack to find the stored destination name when necessary.
   auto resolve_dst_name = [&]() {
     if (!dst_name.IsNull()) return;
-#if !defined(TARGET_ARCH_IA32)
+#if !defined(TARGET_ARCH_IA32_UNDEFINED)
     // Can only come here from type testing stub.
     ASSERT(mode != kTypeCheckFromInline);
 
@@ -1221,7 +1221,7 @@ DEFINE_RUNTIME_ENTRY(TypeCheck, 7) {
     resolve_dst_name();
     if (dst_name.ptr() ==
         Symbols::dynamic_assert_assignable_stc_check().ptr()) {
-#if !defined(TARGET_ARCH_IA32)
+#if !defined(TARGET_ARCH_IA32_UNDEFINED)
       // Can only come here from type testing stub via dynamic AssertAssignable.
       ASSERT(mode != kTypeCheckFromInline);
 #endif
@@ -1277,7 +1277,7 @@ DEFINE_RUNTIME_ENTRY(TypeCheck, 7) {
   }
 
   bool should_update_cache = true;
-#if !defined(TARGET_ARCH_IA32)
+#if !defined(TARGET_ARCH_IA32_UNDEFINED)
   bool would_update_cache_if_not_lazy = false;
 #if !defined(DART_PRECOMPILED_RUNTIME)
   // Checks against type parameters are done by loading the corresponding type
@@ -1350,11 +1350,11 @@ DEFINE_RUNTIME_ENTRY(TypeCheck, 7) {
     }
   }
 #endif  // !defined(DART_PRECOMPILED_RUNTIME)
-#endif  // !defined(TARGET_ARCH_IA32)
+#endif  // !defined(TARGET_ARCH_IA32_UNDEFINED)
 
   if (should_update_cache) {
     if (cache.IsNull()) {
-#if !defined(TARGET_ARCH_IA32)
+#if !defined(TARGET_ARCH_IA32_UNDEFINED)
       ASSERT(mode == kTypeCheckFromSlowStub ||
              (mode == kTypeCheckFromLazySpecializeStub &&
               would_update_cache_if_not_lazy));

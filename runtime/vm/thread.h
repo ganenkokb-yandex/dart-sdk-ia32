@@ -522,6 +522,9 @@ class Thread : public ThreadState {
   }
 
   static intptr_t tsan_utils_offset() { return OFFSET_OF(Thread, tsan_utils_); }
+  static intptr_t memory_pool_offset() {
+    return OFFSET_OF(Thread, memory_pool_);
+  }
 
 #if defined(USING_THREAD_SANITIZER)
   uword exit_through_ffi() const { return exit_through_ffi_; }
@@ -1273,6 +1276,7 @@ class Thread : public ThreadState {
   ALIGN8 Random thread_random_;
 
   TsanUtils* tsan_utils_ = nullptr;
+  MemoryPool<> memory_pool_;
 
   // ---- End accessed from generated code. ----
 

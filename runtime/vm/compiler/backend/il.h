@@ -1340,7 +1340,7 @@ class Instruction : public ZoneAllocated {
   void Unsupported(FlowGraphCompiler* compiler);
 
   static bool SlowPathSharingSupported(bool is_optimizing) {
-#if defined(TARGET_ARCH_IA32)
+#if defined(TARGET_ARCH_IA32_UNDEFINED)
     return false;
 #else
     return FLAG_enable_slow_path_sharing && FLAG_precompiled_mode &&

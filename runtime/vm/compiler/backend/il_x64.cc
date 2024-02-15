@@ -4,7 +4,7 @@
 
 #include "platform/globals.h"
 #include "vm/globals.h"  // Needed here to get TARGET_ARCH_X64.
-#if defined(TARGET_ARCH_X64)
+#if defined(TARGET_ARCH_X64) || defined(TARGET_ARCH_IA32)
 
 #include "vm/compiler/backend/il.h"
 
@@ -19,6 +19,7 @@
 #include "vm/compiler/backend/range_analysis.h"
 #include "vm/compiler/ffi/native_calling_convention.h"
 #include "vm/compiler/jit/compiler.h"
+#include "vm/compiler/like_registers.h"
 #include "vm/compiler/runtime_api.h"
 #include "vm/dart_entry.h"
 #include "vm/instructions.h"
@@ -48,11 +49,16 @@ LocationSummary* Instruction::MakeCallSummary(Zone* zone,
   const auto representation = instr->representation();
   switch (representation) {
     case kTagged:
+#if defined(TARGET_ARCH_X64)
     case kUnboxedInt64:
+#endif
       result->set_out(
           0, Location::RegisterLocation(CallingConventions::kReturnReg));
       break;
     case kPairOfTagged:
+#if defined(TARGET_ARCH_IA32)
+    case kUnboxedInt64:
+#endif
       result->set_out(
           0, Location::Pair(
                  Location::RegisterLocation(CallingConventions::kReturnReg),
@@ -80,9 +86,17 @@ LocationSummary* LoadIndexedUnsafeInstr::MakeLocationSummary(Zone* zone,
   locs->set_in(0, Location::RequiresRegister());
   switch (representation()) {
     case kTagged:
+#if defined(TARGET_ARCH_X64)
     case kUnboxedInt64:
+#endif
       locs->set_out(0, Location::RequiresRegister());
       break;
+#if defined(TARGET_ARCH_IA32)
+    case kUnboxedInt64:
+      locs->set_out(0, Location::Pair(Location::RequiresRegister(),
+                                      Location::RequiresRegister()));
+      break;
+#endif
     case kUnboxedDouble:
       locs->set_out(0, Location::RequiresFpuRegister());
       break;
@@ -110,14 +124,31 @@ void LoadIndexedUnsafeInstr::EmitNativeCode(FlowGraphCompiler* compiler) {
 
   switch (representation()) {
     case kTagged:
-    case kUnboxedInt64: {
+#if defined(TARGET_ARCH_X64)
+    case kUnboxedInt64:
+#endif
+    {
       const auto out = locs()->out(0).reg();
-      __ movq(out, compiler::Address(base_reg(), index, TIMES_4, offset()));
+      __ movq(out, compiler::Address(base_reg(), index, TIMES_2_IA32_4_X64,
+                                     offset()));
       break;
     }
+#if defined(TARGET_ARCH_IA32)
+    case kUnboxedInt64: {
+      const auto out_lo = locs()->out(0).AsPairLocation()->At(0).reg();
+      const auto out_hi = locs()->out(0).AsPairLocation()->At(1).reg();
+      __ movl(out_lo, compiler::Address(base_reg(), index, TIMES_2_IA32_4_X64,
+                                        offset()));
+      __ movl(out_hi,
+              compiler::Address(base_reg(), index, TIMES_2_IA32_4_X64,
+                                offset() + compiler::target::kWordSize));
+      break;
+    }
+#endif
     case kUnboxedDouble: {
       const auto out = locs()->out(0).fpu_reg();
-      __ movsd(out, compiler::Address(base_reg(), index, TIMES_4, offset()));
+      __ movsd(out, compiler::Address(base_reg(), index, TIMES_2_IA32_4_X64,
+                                      offset()));
       break;
     }
     default:
@@ -126,6 +157,7 @@ void LoadIndexedUnsafeInstr::EmitNativeCode(FlowGraphCompiler* compiler) {
   }
 }
 
+#if defined(TARGET_ARCH_X64)
 DEFINE_BACKEND(StoreIndexedUnsafe,
                (NoLocation, Register index, Register value)) {
   ASSERT(instr->RequiredInputRepresentation(
@@ -144,6 +176,7 @@ DEFINE_BACKEND(StoreIndexedUnsafe,
   ASSERT(kSmiTag == 0);
   ASSERT(kSmiTagSize == 1);
 }
+#endif  // defined(TARGET_ARCH_X64)
 
 DEFINE_BACKEND(TailCall, (NoLocation, Fixed<Register, ARGS_DESC_REG>)) {
   compiler->EmitTailCallToStub(instr->code());
@@ -155,6 +188,7 @@ DEFINE_BACKEND(TailCall, (NoLocation, Fixed<Register, ARGS_DESC_REG>)) {
   __ set_constant_pool_allowed(true);
 }
 
+#if defined(TARGET_ARCH_X64)
 LocationSummary* MemoryCopyInstr::MakeLocationSummary(Zone* zone,
                                                       bool opt) const {
   const intptr_t kNumInputs = 5;
@@ -342,6 +376,7 @@ void MemoryCopyInstr::EmitComputeStartPointer(FlowGraphCompiler* compiler,
   auto const scale = ToScaleFactor(element_size_, index_unboxed);
   __ leaq(array_reg, compiler::Address(array_reg, start_reg, scale, offset));
 }
+#endif  // defined(TARGET_ARCH_X64)
 
 LocationSummary* MoveArgumentInstr::MakeLocationSummary(Zone* zone,
                                                         bool opt) const {
@@ -351,8 +386,14 @@ LocationSummary* MoveArgumentInstr::MakeLocationSummary(Zone* zone,
       LocationSummary(zone, kNumInputs, kNumTemps, LocationSummary::kNoCall);
   if (representation() == kUnboxedDouble) {
     locs->set_in(0, Location::RequiresFpuRegister());
+#if defined(TARGET_ARCH_IA32)
+  } else if (representation() == kUnboxedInt64) {
+    locs->set_in(0, Location::Pair(Location::RequiresRegister(),
+                                   Location::RequiresRegister()));
+#else
   } else if (representation() == kUnboxedInt64) {
     locs->set_in(0, Location::RequiresRegister());
+#endif
   } else {
     locs->set_in(0, LocationAnyOrConstant(value()));
   }
@@ -370,6 +411,12 @@ void MoveArgumentInstr::EmitNativeCode(FlowGraphCompiler* compiler) {
     __ StoreObject(dst, value.constant());
   } else if (value.IsFpuRegister()) {
     __ movsd(dst, value.fpu_reg());
+  } else if (value.IsPairLocation()) {
+    PairLocation* pair_locations = locs()->in(0).AsPairLocation();
+    Register low = pair_locations->At(0).reg();
+    Register hi = pair_locations->At(1).reg();
+    __ movq(compiler::Address(RSP, (sp_relative_index() + 1) * kWordSize), hi);
+    __ movq(compiler::Address(RSP, sp_relative_index() * kWordSize), low);
   } else {
     ASSERT(value.IsStackSlot());
     __ MoveMemoryToMemory(dst, LocationToStackSlotAddress(value));
@@ -383,11 +430,16 @@ LocationSummary* ReturnInstr::MakeLocationSummary(Zone* zone, bool opt) const {
       LocationSummary(zone, kNumInputs, kNumTemps, LocationSummary::kNoCall);
   switch (representation()) {
     case kTagged:
+#if defined(TARGET_ARCH_X64)
     case kUnboxedInt64:
+#endif
       locs->set_in(0,
                    Location::RegisterLocation(CallingConventions::kReturnReg));
       break;
     case kPairOfTagged:
+#if defined(TARGET_ARCH_IA32)
+    case kUnboxedInt64:
+#endif
       locs->set_in(
           0, Location::Pair(
                  Location::RegisterLocation(CallingConventions::kReturnReg),
@@ -459,6 +511,7 @@ void ReturnInstr::EmitNativeCode(FlowGraphCompiler* compiler) {
   __ set_constant_pool_allowed(true);
 }
 
+#if defined(TARGET_ARCH_X64)
 static const RegisterSet kCalleeSaveRegistersSet(
     CallingConventions::kCalleeSaveCpuRegisters,
     CallingConventions::kCalleeSaveXmmRegisters);
@@ -706,11 +759,12 @@ void UnboxedConstantInstr::EmitNativeCode(FlowGraphCompiler* compiler) {
     EmitMoveToLocation(compiler, locs()->out(0), scratch);
   }
 }
+#endif  // defined(TARGET_ARCH_X64)
 
 LocationSummary* AssertAssignableInstr::MakeLocationSummary(Zone* zone,
                                                             bool opt) const {
-  auto const dst_type_loc =
-      LocationFixedRegisterOrConstant(dst_type(), TypeTestABI::kDstTypeReg);
+  auto const dst_type_loc = LocationFixedRegisterOrConstant(
+      dst_type(), FindOrigReg(TypeTestABI::kDstTypeReg));
 
   // We want to prevent spilling of the inputs (e.g. function/instantiator tav),
   // since TTS preserves them. So we make this a `kNoCall` summary,
@@ -721,9 +775,10 @@ LocationSummary* AssertAssignableInstr::MakeLocationSummary(Zone* zone,
 
   const intptr_t kNonChangeableInputRegs =
       (1 << TypeTestABI::kInstanceReg) |
-      ((dst_type_loc.IsRegister() ? 1 : 0) << TypeTestABI::kDstTypeReg) |
-      (1 << TypeTestABI::kInstantiatorTypeArgumentsReg) |
-      (1 << TypeTestABI::kFunctionTypeArgumentsReg);
+      ((dst_type_loc.IsRegister() ? 1 : 0)
+       << FindOrigReg(TypeTestABI::kDstTypeReg)) |
+      (1 << FindOrigReg(TypeTestABI::kInstantiatorTypeArgumentsReg)) |
+      (1 << FindOrigReg(TypeTestABI::kFunctionTypeArgumentsReg));
 
   const intptr_t kNumInputs = 4;
 
@@ -733,8 +788,12 @@ LocationSummary* AssertAssignableInstr::MakeLocationSummary(Zone* zone,
   // not guaranteed to be preserved by the ABI.
   const intptr_t kCpuRegistersToPreserve =
       kDartAvailableCpuRegs & ~kNonChangeableInputRegs;
+#if defined(TARGET_ARCH_X64)
   const intptr_t kFpuRegistersToPreserve =
       CallingConventions::kVolatileXmmRegisters & ~(1 << FpuTMP);
+#else
+  const intptr_t kFpuRegistersToPreserve = 0;
+#endif
 
   const intptr_t kNumTemps = (Utils::CountOneBits64(kCpuRegistersToPreserve) +
                               Utils::CountOneBits64(kFpuRegistersToPreserve));
@@ -772,6 +831,7 @@ LocationSummary* AssertAssignableInstr::MakeLocationSummary(Zone* zone,
   return summary;
 }
 
+#if defined(TARGET_ARCH_X64)
 void AssertBooleanInstr::EmitNativeCode(FlowGraphCompiler* compiler) {
   ASSERT(locs()->always_calls());
 
@@ -789,6 +849,7 @@ void AssertBooleanInstr::EmitNativeCode(FlowGraphCompiler* compiler) {
                              deopt_id(), env());
   __ Bind(&done);
 }
+#endif  // defined(TARGET_ARCH_X64)
 
 static Condition TokenKindToIntCondition(Token::Kind kind) {
   switch (kind) {
@@ -810,6 +871,7 @@ static Condition TokenKindToIntCondition(Token::Kind kind) {
   }
 }
 
+#if defined(TARGET_ARCH_X64)
 LocationSummary* EqualityCompareInstr::MakeLocationSummary(Zone* zone,
                                                            bool opt) const {
   const intptr_t kNumInputs = 2;
@@ -987,11 +1049,15 @@ static Condition EmitInt64ComparisonOp(FlowGraphCompiler* compiler,
   }
   return true_condition;
 }
+#endif  // defined(TARGET_ARCH_X64)
 
-static Condition EmitNullAwareInt64ComparisonOp(FlowGraphCompiler* compiler,
-                                                const LocationSummary& locs,
-                                                Token::Kind kind,
-                                                BranchLabels labels) {
+Condition EmitNullAwareInt64ComparisonOp(FlowGraphCompiler* compiler,
+                                         const LocationSummary& locs,
+                                         Token::Kind kind,
+                                         BranchLabels labels) {
+#if defined(TARGET_ARCH_IA32)
+  REPLACE_TMP_REGS_WITH_MEMORY_1(TMP);
+#endif
   ASSERT((kind == Token::kEQ) || (kind == Token::kNE));
   const Register left = locs.in(0).reg();
   const Register right = locs.in(1).reg();
@@ -1017,6 +1083,7 @@ static Condition EmitNullAwareInt64ComparisonOp(FlowGraphCompiler* compiler,
   return true_condition;
 }
 
+#if defined(TARGET_ARCH_X64)
 static Condition TokenKindToDoubleCondition(Token::Kind kind) {
   switch (kind) {
     case Token::kEQ:
@@ -2621,6 +2688,7 @@ void StoreStaticFieldInstr::EmitNativeCode(FlowGraphCompiler* compiler) {
       compiler::Address(temp, compiler::target::FieldTable::OffsetOf(field())),
       value);
 }
+#endif  // defined(TARGET_ARCH_X64)
 
 LocationSummary* InstanceOfInstr::MakeLocationSummary(Zone* zone,
                                                       bool opt) const {
@@ -2639,13 +2707,19 @@ LocationSummary* InstanceOfInstr::MakeLocationSummary(Zone* zone,
 
 void InstanceOfInstr::EmitNativeCode(FlowGraphCompiler* compiler) {
   ASSERT(locs()->in(0).reg() == TypeTestABI::kInstanceReg);
-  ASSERT(locs()->in(1).reg() == TypeTestABI::kInstantiatorTypeArgumentsReg);
-  ASSERT(locs()->in(2).reg() == TypeTestABI::kFunctionTypeArgumentsReg);
+  ASSERT(locs()->in(1).reg() ==
+         FindOrigReg(TypeTestABI::kInstantiatorTypeArgumentsReg));
+  ASSERT(locs()->in(2).reg() ==
+         FindOrigReg(TypeTestABI::kFunctionTypeArgumentsReg));
+
+  __ movq(TypeTestABI::kInstantiatorTypeArgumentsReg, locs()->in(1).reg());
+  __ movq(TypeTestABI::kFunctionTypeArgumentsReg, locs()->in(2).reg());
 
   compiler->GenerateInstanceOf(source(), deopt_id(), env(), type(), locs());
   ASSERT(locs()->out(0).reg() == RAX);
 }
 
+#if defined(TARGET_ARCH_X64)
 // TODO(srdjan): In case of constant inputs make CreateArray kNoCall and
 // use slow path stub.
 LocationSummary* CreateArrayInstr::MakeLocationSummary(Zone* zone,
@@ -5110,7 +5184,7 @@ static void InvokeDoublePow(FlowGraphCompiler* compiler,
   // base == 1.0 -> return 1.0;
   __ comisd(base, result);
   __ j(PARITY_EVEN, &return_nan, compiler::Assembler::kNearJump);
-  __ j(EQUAL, &skip_call, compiler::Assembler::kNearJump);
+  __ j(EQUAL, &skip_call);
   // Note: 'base' could be NaN.
   __ comisd(exp, base);
   // Neither 'exp' nor 'base' is NaN.
@@ -5139,7 +5213,7 @@ static void InvokeDoublePow(FlowGraphCompiler* compiler,
   __ j(EQUAL, &return_zero, compiler::Assembler::kNearJump);
 
   __ sqrtsd(result, base);
-  __ jmp(&skip_call, compiler::Assembler::kNearJump);
+  __ jmp(&skip_call);
 
   __ Bind(&return_zero);
   __ movsd(result, zero_temp);
@@ -5475,6 +5549,7 @@ LocationSummary* CheckClassInstr::MakeLocationSummary(Zone* zone,
   }
   return summary;
 }
+#endif  // defined(TARGET_ARCH_X64)
 
 void CheckClassInstr::EmitNullCheck(FlowGraphCompiler* compiler,
                                     compiler::Label* deopt) {
@@ -5483,6 +5558,7 @@ void CheckClassInstr::EmitNullCheck(FlowGraphCompiler* compiler,
   __ j(cond, deopt);
 }
 
+#if defined(TARGET_ARCH_X64)
 void CheckClassInstr::EmitBitTest(FlowGraphCompiler* compiler,
                                   intptr_t min,
                                   intptr_t max,
@@ -5589,6 +5665,7 @@ void CheckClassIdInstr::EmitNativeCode(FlowGraphCompiler* compiler) {
     __ j(ABOVE, deopt);
   }
 }
+#endif  // defined(TARGET_ARCH_X64)
 
 LocationSummary* CheckArrayBoundInstr::MakeLocationSummary(Zone* zone,
                                                            bool opt) const {
@@ -5649,6 +5726,7 @@ void CheckArrayBoundInstr::EmitNativeCode(FlowGraphCompiler* compiler) {
   }
 }
 
+#if defined(TARGET_ARCH_X64)
 LocationSummary* CheckWritableInstr::MakeLocationSummary(Zone* zone,
                                                          bool opt) const {
   const intptr_t kNumInputs = 1;
@@ -6627,6 +6705,7 @@ Condition StrictCompareInstr::EmitComparisonCodeRegConstant(
   return compiler->EmitEqualityRegConstCompare(reg, obj, needs_number_check(),
                                                source(), deopt_id());
 }
+#endif  // defined(TARGET_ARCH_X64)
 
 LocationSummary* ClosureCallInstr::MakeLocationSummary(Zone* zone,
                                                        bool opt) const {
@@ -6640,6 +6719,9 @@ LocationSummary* ClosureCallInstr::MakeLocationSummary(Zone* zone,
 }
 
 void ClosureCallInstr::EmitNativeCode(FlowGraphCompiler* compiler) {
+#if defined(TARGET_ARCH_IA32)
+  auto RCX = EBX;
+#endif
   // Arguments descriptor is expected in ARGS_DESC_REG.
   const intptr_t argument_count = ArgumentCount();  // Includes type args.
   const Array& arguments_descriptor =
@@ -6668,6 +6750,7 @@ void ClosureCallInstr::EmitNativeCode(FlowGraphCompiler* compiler) {
   if (!FLAG_precompiled_mode) {
     // RBX: Smi 0 (no IC data; the lazy-compile stub expects a GC-safe value).
     __ xorq(IC_DATA_REG, IC_DATA_REG);
+    __ movq(AllocateClosureABI::kFunctionReg, IC_DATA_REG);
   }
   __ call(RCX);
   compiler->EmitCallsiteMetadata(source(), deopt_id(),
@@ -6675,6 +6758,7 @@ void ClosureCallInstr::EmitNativeCode(FlowGraphCompiler* compiler) {
   compiler->EmitDropArguments(argument_count);
 }
 
+#if defined(TARGET_ARCH_X64)
 LocationSummary* BooleanNegateInstr::MakeLocationSummary(Zone* zone,
                                                          bool opt) const {
   return LocationSummary::Make(zone, 1, Location::SameAsFirstInput(),
@@ -6722,9 +6806,12 @@ LocationSummary* AllocateObjectInstr::MakeLocationSummary(Zone* zone,
   locs->set_out(0, Location::RegisterLocation(AllocateObjectABI::kResultReg));
   return locs;
 }
+#endif  // defined(TARGET_ARCH_X64)
 
 void AllocateObjectInstr::EmitNativeCode(FlowGraphCompiler* compiler) {
   if (type_arguments() != nullptr) {
+    __ movq(AllocateObjectABI::kTypeArgumentsReg,
+            locs()->in(kTypeArgumentsPos).reg());
     TypeUsageInfo* type_usage_info = compiler->thread()->type_usage_info();
     if (type_usage_info != nullptr) {
       RegisterTypeArgumentsUse(compiler->function(), type_usage_info, cls_,
@@ -6752,4 +6839,4 @@ void DebugStepCheckInstr::EmitNativeCode(FlowGraphCompiler* compiler) {
 
 #undef __
 
-#endif  // defined(TARGET_ARCH_X64)
+#endif  // defined(TARGET_ARCH_X64) || defined(TARGET_ARCH_IA32)

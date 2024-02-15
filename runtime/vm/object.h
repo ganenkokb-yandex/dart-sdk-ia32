@@ -836,7 +836,7 @@ class Object {
     ASSERT(Contains(reinterpret_cast<uword>(addr) - 1) &&
            Contains(reinterpret_cast<uword>(addr) - kWordSize));
     // At least check that there is a NoSafepointScope and hope it's big enough.
-    ASSERT(Thread::Current()->no_safepoint_scope_depth() > 0);
+    DEBUG_ASSERT(Thread::Current()->no_safepoint_scope_depth() > 0);
     return const_cast<FieldType*>(addr);
   }
 
@@ -5696,8 +5696,8 @@ class Instructions : public Object {
 #if defined(TARGET_ARCH_IA32)
   static constexpr intptr_t kMonomorphicEntryOffsetJIT = 6;
   static constexpr intptr_t kPolymorphicEntryOffsetJIT = 36;
-  static constexpr intptr_t kMonomorphicEntryOffsetAOT = 0;
-  static constexpr intptr_t kPolymorphicEntryOffsetAOT = 0;
+  static constexpr intptr_t kMonomorphicEntryOffsetAOT = 6;
+  static constexpr intptr_t kPolymorphicEntryOffsetAOT = 18;
 #elif defined(TARGET_ARCH_X64)
   static constexpr intptr_t kMonomorphicEntryOffsetJIT = 8;
   static constexpr intptr_t kPolymorphicEntryOffsetJIT = 42;
@@ -7738,7 +7738,7 @@ class SubtypeTestCache : public Object {
 
   // The maximum number of occupied entries for a linear subtype test cache
   // before swapping to a hash table-based cache. Exposed publicly for tests.
-#if defined(TARGET_ARCH_IA32)
+#if defined(TARGET_ARCH_IA32_UNDEFINED)
   // We don't generate hash cache probing in the stub on IA32, so larger caches
   // force runtime checks.
   static constexpr intptr_t kMaxLinearCacheEntries = 100;
@@ -8795,7 +8795,7 @@ class TypeArguments : public Instance {
 
     // The maximum number of occupied entries for a linear cache of
     // instantiations before swapping to a hash table-based cache.
-#if defined(TARGET_ARCH_IA32)
+#if defined(TARGET_ARCH_IA32_UNDEFINED)
     // We don't generate hash cache probing in the stub on IA32.
     static constexpr intptr_t kMaxLinearCacheEntries = 500;
 #else

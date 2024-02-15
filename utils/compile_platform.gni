@@ -84,5 +84,8 @@ template("compile_platform") {
     }
     args += [ rebase_path("$root_out_dir/$outline", root_build_dir) ]
     args += rebase_path(outputs, root_build_dir)
+    if (defined(invoker.extra_outputs)) {
+      outputs += invoker.extra_outputs
+    }
   }
 }

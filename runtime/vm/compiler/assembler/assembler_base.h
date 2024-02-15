@@ -495,7 +495,7 @@ class AssemblerBuffer : public ValueObject {
     return *pointer_offsets_;
   }
 
-#if defined(TARGET_ARCH_IA32)
+#if defined(TARGET_ARCH_IA32_UNDEFINED)
   // Emit an object pointer directly in the code.
   void EmitObject(const Object& object);
 #endif

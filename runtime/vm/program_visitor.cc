@@ -1065,7 +1065,7 @@ class ArrayKeyValueTrait {
 
   static inline uword Hash(Key key) {
     ASSERT(!key->IsNull());
-    ASSERT(Thread::Current()->no_safepoint_scope_depth() > 0);
+    DEBUG_ASSERT(Thread::Current()->no_safepoint_scope_depth() > 0);
     const intptr_t len = key->Length();
     uint32_t hash = Utils::WordHash(len);
     for (intptr_t i = 0; i < len; ++i) {
@@ -1184,7 +1184,7 @@ class CodeKeyValueTrait {
   static Value ValueOf(Pair kv) { return kv; }
 
   static inline uword Hash(Key key) {
-    ASSERT(Thread::Current()->no_safepoint_scope_depth() > 0);
+    DEBUG_ASSERT(Thread::Current()->no_safepoint_scope_depth() > 0);
     return Utils::WordHash(
         CombineHashes(Instructions::Hash(key->instructions()),
                       static_cast<uword>(key->static_calls_target_table())));

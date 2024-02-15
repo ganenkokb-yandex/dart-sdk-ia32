@@ -573,8 +573,9 @@ void FlowGraphCompiler::EmitSourceLine(Instruction* instr) {
   const intptr_t inlining_id = source.inlining_id < 0 ? 0 : source.inlining_id;
   const Function& function =
       *code_source_map_builder_->inline_id_to_function()[inlining_id];
-  ASSERT(instr->env() == nullptr ||
-         instr->env()->function().ptr() == function.ptr());
+  //MERGE(ganenkokb): HACKy comment
+  // ASSERT(instr->env() == nullptr ||
+  //        instr->env()->function().ptr() == function.ptr());
   const auto& script = Script::Handle(zone(), function.script());
   intptr_t line_nr;
   if (script.GetTokenLocation(source.token_pos, &line_nr)) {
@@ -625,7 +626,7 @@ void FlowGraphCompiler::EmitFunctionEntrySourcePositionDescriptorIfNeeded() {
 void FlowGraphCompiler::CompileGraph() {
   InitCompiler();
 
-#if !defined(TARGET_ARCH_IA32)
+#if !defined(TARGET_ARCH_IA32_UNDEFINED)
   // For JIT we have multiple entrypoints functionality which moved the frame
   // setup into the [TargetEntryInstr] (which will set the constant pool
   // allowed bit to true).  Despite this we still have to set the
@@ -642,7 +643,7 @@ void FlowGraphCompiler::CompileGraph() {
 #endif
 
   if (!skip_body_compilation()) {
-#if !defined(TARGET_ARCH_IA32)
+#if !defined(TARGET_ARCH_IA32_UNDEFINED)
     ASSERT(assembler()->constant_pool_allowed());
 #endif
     GenerateDeferredCode();
@@ -1411,7 +1412,7 @@ bool FlowGraphCompiler::TryIntrinsifyHelper() {
   if (FLAG_intrinsify) {
     const auto& function = parsed_function().function();
     if (function.IsMethodExtractor()) {
-#if !defined(TARGET_ARCH_IA32)
+#if !defined(TARGET_ARCH_IA32_UNDEFINED)
       auto& extracted_method =
           Function::ZoneHandle(function.extracted_method_closure());
       auto& klass = Class::Handle(extracted_method.Owner());
@@ -1426,7 +1427,7 @@ bool FlowGraphCompiler::TryIntrinsifyHelper() {
                                        type_arguments_field_offset);
       SpecialStatsEnd(CombinedCodeStatistics::kTagIntrinsics);
       return true;
-#endif  // !defined(TARGET_ARCH_IA32)
+#endif  // !defined(TARGET_ARCH_IA32_UNDEFINED)
     }
   }
 
@@ -1565,7 +1566,7 @@ void FlowGraphCompiler::GenerateStaticCall(intptr_t deopt_id,
 }
 
 void FlowGraphCompiler::GenerateNumberTypeCheck(
-    Register class_id_reg,
+    compiler::LikeABI class_id_reg,
     const AbstractType& type,
     compiler::Label* is_instance_lbl,
     compiler::Label* is_not_instance_lbl) {
@@ -1583,7 +1584,7 @@ void FlowGraphCompiler::GenerateNumberTypeCheck(
 }
 
 void FlowGraphCompiler::GenerateStringTypeCheck(
-    Register class_id_reg,
+    compiler::LikeABI class_id_reg,
     compiler::Label* is_instance_lbl,
     compiler::Label* is_not_instance_lbl) {
   assembler()->Comment("StringTypeCheck");
@@ -1596,7 +1597,7 @@ void FlowGraphCompiler::GenerateStringTypeCheck(
 }
 
 void FlowGraphCompiler::GenerateListTypeCheck(
-    Register class_id_reg,
+    compiler::LikeABI class_id_reg,
     compiler::Label* is_instance_lbl) {
   assembler()->Comment("ListTypeCheck");
   COMPILE_ASSERT((kImmutableArrayCid == kArrayCid + 1) &&
@@ -1848,7 +1849,6 @@ void FlowGraphCompiler::AllocateRegistersLocally(Instruction* instr) {
   }
 }
 
-
 const ICData* FlowGraphCompiler::GetOrAddInstanceCallICData(
     intptr_t deopt_id,
     const String& target_name,
@@ -2080,7 +2080,7 @@ void FlowGraphCompiler::EmitDropArguments(intptr_t count) {
   }
 }
 
-void FlowGraphCompiler::CheckClassIds(Register class_id_reg,
+void FlowGraphCompiler::CheckClassIds(compiler::LikeABI class_id_reg,
                                       const GrowableArray<intptr_t>& class_ids,
                                       compiler::Label* is_equal_lbl,
                                       compiler::Label* is_not_equal_lbl) {
@@ -2215,9 +2215,10 @@ void FlowGraphCompiler::EmitTestAndCall(const CallTargets& targets,
   }
 }
 
-bool FlowGraphCompiler::GenerateSubtypeRangeCheck(Register class_id_reg,
-                                                  const Class& type_class,
-                                                  compiler::Label* is_subtype) {
+bool FlowGraphCompiler::GenerateSubtypeRangeCheck(
+    compiler::LikeABI class_id_reg,
+    const Class& type_class,
+    compiler::Label* is_subtype) {
   HierarchyInfo* hi = Thread::Current()->hierarchy_info();
   if (hi != nullptr) {
     const CidRangeVector& ranges =
@@ -2239,9 +2240,10 @@ bool FlowGraphCompiler::GenerateSubtypeRangeCheck(Register class_id_reg,
   return false;
 }
 
+template <typename T>
 bool FlowGraphCompiler::GenerateCidRangesCheck(
     compiler::Assembler* assembler,
-    Register class_id_reg,
+    T class_id_reg,
     const CidRangeVector& cid_ranges,
     compiler::Label* inside_range_lbl,
     compiler::Label* outside_range_lbl,
@@ -2273,9 +2275,18 @@ bool FlowGraphCompiler::GenerateCidRangesCheck(
   return bias != 0;
 }
 
+template bool FlowGraphCompiler::GenerateCidRangesCheck<Register>(
+    compiler::Assembler* assembler,
+    Register class_id_reg,
+    const CidRangeVector& cid_ranges,
+    compiler::Label* inside_range_lbl,
+    compiler::Label* outside_range_lbl,
+    bool fall_through_if_inside);
+
+template <typename T>
 int FlowGraphCompiler::EmitTestAndCallCheckCid(compiler::Assembler* assembler,
                                                compiler::Label* label,
-                                               Register class_id_reg,
+                                               T class_id_reg,
                                                const CidRangeValue& range,
                                                int bias,
                                                bool jump_on_miss) {
@@ -2304,13 +2315,13 @@ bool FlowGraphCompiler::CheckAssertAssignableTypeTestingABILocations(
               .IsAbstractType()) ||
          (locs.in(AssertAssignableInstr::kDstTypePos).IsRegister() &&
           locs.in(AssertAssignableInstr::kDstTypePos).reg() ==
-              TypeTestABI::kDstTypeReg));
+              FindOrigReg(TypeTestABI::kDstTypeReg)));
   ASSERT(locs.in(AssertAssignableInstr::kInstantiatorTAVPos).IsRegister() &&
          locs.in(AssertAssignableInstr::kInstantiatorTAVPos).reg() ==
-             TypeTestABI::kInstantiatorTypeArgumentsReg);
+             FindOrigReg(TypeTestABI::kInstantiatorTypeArgumentsReg));
   ASSERT(locs.in(AssertAssignableInstr::kFunctionTAVPos).IsRegister() &&
          locs.in(AssertAssignableInstr::kFunctionTAVPos).reg() ==
-             TypeTestABI::kFunctionTypeArgumentsReg);
+             FindOrigReg(TypeTestABI::kFunctionTypeArgumentsReg));
   ASSERT(locs.out(0).IsRegister() &&
          locs.out(0).reg() == TypeTestABI::kInstanceReg);
   return true;
@@ -2438,8 +2449,8 @@ SubtypeTestCachePtr FlowGraphCompiler::GenerateSubtype1TestCacheLookup(
   // We don't use TypeTestABI::kScratchReg for the first scratch register as
   // it is not defined on IA32. Instead, we use the subtype test cache
   // register, as it is clobbered by the subtype test cache stub call anyway.
-  const Register kScratch1Reg = TypeTestABI::kSubtypeTestCacheReg;
-#if defined(TARGET_ARCH_IA32)
+  const compiler::LikeABI kScratch1Reg = TypeTestABI::kSubtypeTestCacheReg;
+#if defined(TARGET_ARCH_IA32_UNDEFINED)
   // We don't use TypeTestABI::kScratchReg as it is not defined on IA32.
   // Instead, we pick another TypeTestABI register and push/pop it around
   // the uses of the second scratch register.
@@ -2448,14 +2459,14 @@ SubtypeTestCachePtr FlowGraphCompiler::GenerateSubtype1TestCacheLookup(
 #else
   // We can use TypeTestABI::kScratchReg for the second scratch register, as
   // IA32 is handled separately.
-  const Register kScratch2Reg = TypeTestABI::kScratchReg;
+  const compiler::LikeABI kScratch2Reg = TypeTestABI::kScratchReg;
 #endif
   static_assert(kScratch1Reg != kScratch2Reg,
                 "Scratch registers must be distinct");
   // Check immediate superclass equality.
   __ LoadClassId(kScratch2Reg, TypeTestABI::kInstanceReg);
   __ LoadClassById(kScratch1Reg, kScratch2Reg);
-#if defined(TARGET_ARCH_IA32)
+#if defined(TARGET_ARCH_IA32_UNDEFINED)
   // kScratch2 is no longer used, so restore it.
   __ PopRegister(kScratch2Reg);
 #endif
@@ -2504,7 +2515,7 @@ FlowGraphCompiler::GenerateInstantiatedTypeWithArgumentsTest(
   // We don't use TypeTestABI::kScratchReg as it is not defined on IA32.
   // Instead, we use the subtype test cache register, as it is clobbered by the
   // subtype test cache stub call anyway.
-  const Register kScratchReg = TypeTestABI::kSubtypeTestCacheReg;
+  const compiler::LikeABI kScratchReg = TypeTestABI::kSubtypeTestCacheReg;
   if (is_raw_type) {
     // dynamic type argument, check only classes.
     __ LoadClassId(kScratchReg, TypeTestABI::kInstanceReg);
@@ -2556,7 +2567,7 @@ bool FlowGraphCompiler::GenerateInstantiatedTypeNoArgumentsTest(
   // We don't use TypeTestABI::kScratchReg as it is not defined on IA32.
   // Instead, we use the subtype test cache register, as it is clobbered by the
   // subtype test cache stub call anyway.
-  const Register kScratchReg = TypeTestABI::kSubtypeTestCacheReg;
+  const compiler::LikeABI kScratchReg = TypeTestABI::kSubtypeTestCacheReg;
 
   const Class& smi_class = Class::Handle(zone(), Smi::Class());
   const bool smi_is_ok =
@@ -2620,11 +2631,11 @@ SubtypeTestCachePtr FlowGraphCompiler::GenerateUninstantiatedTypeTest(
     // We don't use TypeTestABI::kScratchReg as it is not defined on IA32.
     // Instead, we use the subtype test cache register, as it is clobbered by
     // the subtype test cache stub call anyway.
-    const Register kScratchReg = TypeTestABI::kSubtypeTestCacheReg;
+    const compiler::LikeABI kScratchReg = TypeTestABI::kSubtypeTestCacheReg;
 
     const TypeParameter& type_param = TypeParameter::Cast(type);
 
-    const Register kTypeArgumentsReg =
+    const compiler::LikeABI kTypeArgumentsReg =
         type_param.IsClassTypeParameter()
             ? TypeTestABI::kInstantiatorTypeArgumentsReg
             : TypeTestABI::kFunctionTypeArgumentsReg;
@@ -2741,7 +2752,7 @@ void FlowGraphCompiler::GenerateInstanceOf(const InstructionSource& source,
   __ Bind(&done);
 }
 
-#if !defined(TARGET_ARCH_IA32)
+#if !defined(TARGET_ARCH_IA32_UNDEFINED)
 // Expected inputs (from TypeTestABI):
 // - kInstanceReg: instance (preserved).
 // - kInstantiatorTypeArgumentsReg: instantiator type arguments
@@ -2805,7 +2816,7 @@ void FlowGraphCompiler::GenerateAssertAssignable(
   }
 
   compiler::Label done;
-  Register type_reg = TypeTestABI::kDstTypeReg;
+  compiler::LikeABI type_reg = TypeTestABI::kDstTypeReg;
   // Generate caller-side checks to perform prior to calling the TTS.
   if (dst_type.IsNull()) {
     __ Comment("AssertAssignable for runtime type");
@@ -2829,7 +2840,7 @@ void FlowGraphCompiler::GenerateAssertAssignable(
 void FlowGraphCompiler::GenerateTTSCall(const InstructionSource& source,
                                         intptr_t deopt_id,
                                         Environment* env,
-                                        Register reg_with_type,
+                                        compiler::LikeABI reg_with_type,
                                         const AbstractType& dst_type,
                                         const String& dst_name,
                                         LocationSummary* locs) {
@@ -2950,7 +2961,7 @@ void FlowGraphCompiler::GenerateCallerChecksForAssertAssignable(
       __ CompareObject(TypeTestABI::kInstanceReg, Object::null_object());
       __ BranchIf(EQUAL, done);
     }
-    const Register kTypeArgumentsReg =
+    const compiler::LikeABI kTypeArgumentsReg =
         type_param.IsClassTypeParameter()
             ? TypeTestABI::kInstantiatorTypeArgumentsReg
             : TypeTestABI::kFunctionTypeArgumentsReg;
@@ -2998,7 +3009,7 @@ void FlowGraphCompiler::GenerateCallerChecksForAssertAssignable(
   }
   output_dst_type();
 }
-#endif  // !defined(TARGET_ARCH_IA32)
+#endif  // !defined(TARGET_ARCH_IA32_UNDEFINED)
 
 #undef __
 
@@ -3170,7 +3181,7 @@ CodePtr NullErrorSlowPath::GetStub(FlowGraphCompiler* compiler,
 
 void NullErrorSlowPath::EmitSharedStubCall(FlowGraphCompiler* compiler,
                                            bool save_fpu_registers) {
-#if defined(TARGET_ARCH_IA32)
+#if defined(TARGET_ARCH_IA32_UNDEFINED)
   UNREACHABLE();
 #else
   const auto& stub =
@@ -3189,7 +3200,7 @@ void RangeErrorSlowPath::PushArgumentsForRuntimeCall(
 
 void RangeErrorSlowPath::EmitSharedStubCall(FlowGraphCompiler* compiler,
                                             bool save_fpu_registers) {
-#if defined(TARGET_ARCH_IA32)
+#if defined(TARGET_ARCH_IA32_UNDEFINED)
   UNREACHABLE();
 #else
   auto object_store = compiler->isolate_group()->object_store();
@@ -3204,7 +3215,7 @@ void RangeErrorSlowPath::EmitSharedStubCall(FlowGraphCompiler* compiler,
 
 void WriteErrorSlowPath::EmitSharedStubCall(FlowGraphCompiler* compiler,
                                             bool save_fpu_registers) {
-#if defined(TARGET_ARCH_IA32)
+#if defined(TARGET_ARCH_IA32_UNDEFINED)
   UNREACHABLE();
 #else
   auto object_store = compiler->isolate_group()->object_store();
@@ -3225,7 +3236,7 @@ void LateInitializationErrorSlowPath::PushArgumentsForRuntimeCall(
 void LateInitializationErrorSlowPath::EmitSharedStubCall(
     FlowGraphCompiler* compiler,
     bool save_fpu_registers) {
-#if defined(TARGET_ARCH_IA32)
+#if defined(TARGET_ARCH_IA32_UNDEFINED)
   UNREACHABLE();
 #else
   ASSERT(instruction()->locs()->temp(0).reg() ==

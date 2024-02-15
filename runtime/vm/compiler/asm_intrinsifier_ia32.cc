@@ -1456,7 +1456,7 @@ void AsmIntrinsifier::StringBaseCharAt(Assembler* assembler,
                               target::OneByteString::data_offset()));
   __ cmpl(EBX, Immediate(target::Symbols::kNumberOfOneCharCodeSymbols));
   __ j(GREATER_EQUAL, normal_ir_body);
-  __ movl(EAX, Immediate(SymbolsPredefinedAddress()));
+  __ movl(EAX, Address(THR, target::Thread::predefined_symbols_address_offset()));
   __ movl(EAX, Address(EAX, EBX, TIMES_4,
                        target::Symbols::kNullCharCodeSymbolOffset *
                            target::kWordSize));
@@ -1470,7 +1470,7 @@ void AsmIntrinsifier::StringBaseCharAt(Assembler* assembler,
                               target::TwoByteString::data_offset()));
   __ cmpl(EBX, Immediate(target::Symbols::kNumberOfOneCharCodeSymbols));
   __ j(GREATER_EQUAL, normal_ir_body);
-  __ movl(EAX, Immediate(SymbolsPredefinedAddress()));
+  __ movl(EAX, Address(THR, target::Thread::predefined_symbols_address_offset()));
   __ movl(EAX, Address(EAX, EBX, TIMES_4,
                        target::Symbols::kNullCharCodeSymbolOffset *
                            target::kWordSize));

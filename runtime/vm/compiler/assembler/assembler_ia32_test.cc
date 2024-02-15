@@ -23,6 +23,15 @@ namespace compiler {
 
 #define __ assembler->
 
+static void EnterTestWithThread(Assembler* assembler) {
+  __ pushl(THR);
+  __ movl(THR, Address(ESP, 3 * target::kWordSize));
+}
+
+static void LeaveTestWithThread(Assembler* assembler) {
+  __ popl(THR);
+}
+
 ASSEMBLER_TEST_GENERATE(Simple, assembler) {
   __ movl(EAX, Immediate(42));
   __ ret();
@@ -1780,6 +1789,7 @@ ASSEMBLER_TEST_RUN(PackedCompareNLE, test) {
 }
 
 ASSEMBLER_TEST_GENERATE(PackedNegate, assembler) {
+  EnterTestWithThread(assembler);
   __ movl(EAX, Immediate(bit_cast<int32_t, float>(12.3f)));
   __ movd(XMM0, EAX);
   __ shufps(XMM0, XMM0, Immediate(0x0));
@@ -1790,27 +1800,34 @@ ASSEMBLER_TEST_GENERATE(PackedNegate, assembler) {
   __ movss(Address(ESP, 0), XMM0);
   __ flds(Address(ESP, 0));
   __ popl(EAX);
+  LeaveTestWithThread(assembler);
   __ ret();
 }
 
 ASSEMBLER_TEST_RUN(PackedNegate, test) {
-  typedef float (*PackedNegateCode)();
-  float res = reinterpret_cast<PackedNegateCode>(test->entry())();
+  float res = test->InvokeWithCodeAndThread<float>();
   EXPECT_FLOAT_EQ(-12.3f, res, 0.001f);
   EXPECT_DISASSEMBLY(
+      "push esi\n"
+      "mov esi,[esp+0xc]\n"
       "mov eax,0x4144cccd\n"
       "movd xmm0,eax\n"
       "shufps xmm0,xmm0 [0]\n"
-      "xorps xmm0,[0x........]\n"
+      "push eax\n"
+      "mov eax,[esi+0x154]\n"
+      "xorps xmm0,[eax]\n"
+      "pop eax\n"
       "shufps xmm0,xmm0 [aa]\n"
       "push eax\n"
       "movss [esp],xmm0\n"
       "fld_s [esp]\n"
       "pop eax\n"
+      "pop esi\n"
       "ret\n");
 }
 
 ASSEMBLER_TEST_GENERATE(PackedAbsolute, assembler) {
+  EnterTestWithThread(assembler);
   __ movl(EAX, Immediate(bit_cast<int32_t, float>(-15.3f)));
   __ movd(XMM0, EAX);
   __ shufps(XMM0, XMM0, Immediate(0x0));
@@ -1821,27 +1838,34 @@ ASSEMBLER_TEST_GENERATE(PackedAbsolute, assembler) {
   __ movss(Address(ESP, 0), XMM0);
   __ flds(Address(ESP, 0));
   __ popl(EAX);
+  LeaveTestWithThread(assembler);
   __ ret();
 }
 
 ASSEMBLER_TEST_RUN(PackedAbsolute, test) {
-  typedef float (*PackedAbsoluteCode)();
-  float res = reinterpret_cast<PackedAbsoluteCode>(test->entry())();
+  float res = test->InvokeWithCodeAndThread<float>();
   EXPECT_FLOAT_EQ(15.3f, res, 0.001f);
   EXPECT_DISASSEMBLY(
+      "push esi\n"
+      "mov esi,[esp+0xc]\n"
       "mov eax,0xc174cccd\n"
       "movd xmm0,eax\n"
       "shufps xmm0,xmm0 [0]\n"
-      "andps xmm0,[0x........]\n"
+      "push eax\n"
+      "mov eax,[esi+0x158]\n"
+      "andps xmm0,[eax]\n"
+      "pop eax\n"
       "shufps xmm0,xmm0 [aa]\n"
       "push eax\n"
       "movss [esp],xmm0\n"
       "fld_s [esp]\n"
       "pop eax\n"
+      "pop esi\n"
       "ret\n");
 }
 
 ASSEMBLER_TEST_GENERATE(PackedSetWZero, assembler) {
+  EnterTestWithThread(assembler);
   __ set1ps(XMM0, EAX, Immediate(bit_cast<int32_t, float>(12.3f)));
   __ zerowps(XMM0);
   __ shufps(XMM0, XMM0, Immediate(0xFF));  // Copy the W lane which is now 0.0.
@@ -1850,23 +1874,29 @@ ASSEMBLER_TEST_GENERATE(PackedSetWZero, assembler) {
   __ movss(Address(ESP, 0), XMM0);
   __ flds(Address(ESP, 0));
   __ popl(EAX);
+  LeaveTestWithThread(assembler);
   __ ret();
 }
 
 ASSEMBLER_TEST_RUN(PackedSetWZero, test) {
-  typedef float (*PackedSetWZeroCode)();
-  float res = reinterpret_cast<PackedSetWZeroCode>(test->entry())();
+  float res = test->InvokeWithCodeAndThread<float>();
   EXPECT_FLOAT_EQ(0.0f, res, 0.001f);
   EXPECT_DISASSEMBLY(
+      "push esi\n"
+      "mov esi,[esp+0xc]\n"
       "mov eax,0x4144cccd\n"
       "movd xmm0,eax\n"
       "shufps xmm0,xmm0 [0]\n"
-      "andps xmm0,[0x........]\n"
+      "push eax\n"
+      "mov eax,[esi+0x15c]\n"
+      "andps xmm0,[eax]\n"
+      "pop eax\n"
       "shufps xmm0,xmm0 [ff]\n"
       "push eax\n"
       "movss [esp],xmm0\n"
       "fld_s [esp]\n"
       "pop eax\n"
+      "pop esi\n"
       "ret\n");
 }
 
@@ -1945,8 +1975,10 @@ ASSEMBLER_TEST_GENERATE(PackedLogicalOr, assembler) {
     uint32_t c;
     uint32_t d;
   } constant2 = {0x0F0F0F0F, 0x0F0F0F0F, 0x0F0F0F0F, 0x0F0F0F0F};
-  __ movups(XMM0, Address::Absolute(reinterpret_cast<uword>(&constant1)));
-  __ movups(XMM1, Address::Absolute(reinterpret_cast<uword>(&constant2)));
+  __ movups(XMM0,
+            Address::AbsoluteForTest(reinterpret_cast<uword>(&constant1)));
+  __ movups(XMM1,
+            Address::AbsoluteForTest(reinterpret_cast<uword>(&constant2)));
   __ orps(XMM0, XMM1);
   // Copy the low lane at ESP.
   __ pushl(EAX);
@@ -1984,8 +2016,9 @@ ASSEMBLER_TEST_GENERATE(PackedLogicalAnd, assembler) {
     uint32_t c;
     uint32_t d;
   } constant2 = {0x0F0FFF0F, 0x0F0F0F0F, 0x0F0F0F0F, 0x0F0F0F0F};
-  __ movups(XMM0, Address::Absolute(reinterpret_cast<uword>(&constant1)));
-  __ andps(XMM0, Address::Absolute(reinterpret_cast<uword>(&constant2)));
+  __ movups(XMM0,
+            Address::AbsoluteForTest(reinterpret_cast<uword>(&constant1)));
+  __ andps(XMM0, Address::AbsoluteForTest(reinterpret_cast<uword>(&constant2)));
   // Copy the low lane at ESP.
   __ pushl(EAX);
   __ movss(Address(ESP, 0), XMM0);
@@ -2015,27 +2048,35 @@ ASSEMBLER_TEST_GENERATE(PackedLogicalNot, assembler) {
     uint32_t c;
     uint32_t d;
   } constant1 = {0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF};
-  __ movups(XMM0, Address::Absolute(reinterpret_cast<uword>(&constant1)));
+  EnterTestWithThread(assembler);
+  __ movups(XMM0,
+            Address::AbsoluteForTest(reinterpret_cast<uword>(&constant1)));
   __ notps(XMM0);
   // Copy the low lane at ESP.
   __ pushl(EAX);
   __ movss(Address(ESP, 0), XMM0);
   __ flds(Address(ESP, 0));
   __ popl(EAX);
+  LeaveTestWithThread(assembler);
   __ ret();
 }
 
 ASSEMBLER_TEST_RUN(PackedLogicalNot, test) {
-  typedef uint32_t (*PackedLogicalNotCode)();
-  uint32_t res = reinterpret_cast<PackedLogicalNotCode>(test->entry())();
+  uint32_t res = test->InvokeWithCodeAndThread<uint32_t>();
   EXPECT_EQ(static_cast<uword>(0x0), res);
   EXPECT_DISASSEMBLY(
+      "push esi\n"
+      "mov esi,[esp+0xc]\n"
       "movups xmm0,[0x........]\n"
-      "xorps xmm0,[0x........]\n"
+      "push eax\n"
+      "mov eax,[esi+0x150]\n"
+      "xorps xmm0,[eax]\n"
+      "pop eax\n"
       "push eax\n"
       "movss [esp],xmm0\n"
       "fld_s [esp]\n"
       "pop eax\n"
+      "pop esi\n"
       "ret\n");
 }
 
@@ -2053,9 +2094,11 @@ ASSEMBLER_TEST_GENERATE(PackedMoveHighLow, assembler) {
     float d;
   } constant1 = {5.0, 6.0, 7.0, 8.0};
   // XMM0 = 1.0f, 2.0f, 3.0f, 4.0f.
-  __ movups(XMM0, Address::Absolute(reinterpret_cast<uword>(&constant0)));
+  __ movups(XMM0,
+            Address::AbsoluteForTest(reinterpret_cast<uword>(&constant0)));
   // XMM1 = 5.0f, 6.0f, 7.0f, 8.0f.
-  __ movups(XMM1, Address::Absolute(reinterpret_cast<uword>(&constant1)));
+  __ movups(XMM1,
+            Address::AbsoluteForTest(reinterpret_cast<uword>(&constant1)));
   // XMM0 = 7.0f, 8.0f, 3.0f, 4.0f.
   __ movhlps(XMM0, XMM1);
   __ xorps(XMM1, XMM1);
@@ -2105,9 +2148,11 @@ ASSEMBLER_TEST_GENERATE(PackedMoveLowHigh, assembler) {
     float d;
   } constant1 = {5.0, 6.0, 7.0, 8.0};
   // XMM0 = 1.0f, 2.0f, 3.0f, 4.0f.
-  __ movups(XMM0, Address::Absolute(reinterpret_cast<uword>(&constant0)));
+  __ movups(XMM0,
+            Address::AbsoluteForTest(reinterpret_cast<uword>(&constant0)));
   // XMM1 = 5.0f, 6.0f, 7.0f, 8.0f.
-  __ movups(XMM1, Address::Absolute(reinterpret_cast<uword>(&constant1)));
+  __ movups(XMM1,
+            Address::AbsoluteForTest(reinterpret_cast<uword>(&constant1)));
   // XMM0 = 1.0f, 2.0f, 5.0f, 6.0f
   __ movlhps(XMM0, XMM1);
   __ xorps(XMM1, XMM1);
@@ -2157,9 +2202,11 @@ ASSEMBLER_TEST_GENERATE(PackedUnpackLow, assembler) {
     float d;
   } constant1 = {5.0, 6.0, 7.0, 8.0};
   // XMM0 = 1.0f, 2.0f, 3.0f, 4.0f.
-  __ movups(XMM0, Address::Absolute(reinterpret_cast<uword>(&constant0)));
+  __ movups(XMM0,
+            Address::AbsoluteForTest(reinterpret_cast<uword>(&constant0)));
   // XMM1 = 5.0f, 6.0f, 7.0f, 8.0f.
-  __ movups(XMM1, Address::Absolute(reinterpret_cast<uword>(&constant1)));
+  __ movups(XMM1,
+            Address::AbsoluteForTest(reinterpret_cast<uword>(&constant1)));
   // XMM0 = 1.0f, 5.0f, 2.0f, 6.0f.
   __ unpcklps(XMM0, XMM1);
   // XMM1 = 1.0f, 5.0f, 2.0f, 6.0f.
@@ -2207,9 +2254,11 @@ ASSEMBLER_TEST_GENERATE(PackedUnpackHigh, assembler) {
     float d;
   } constant1 = {5.0, 6.0, 7.0, 8.0};
   // XMM0 = 1.0f, 2.0f, 3.0f, 4.0f.
-  __ movups(XMM0, Address::Absolute(reinterpret_cast<uword>(&constant0)));
+  __ movups(XMM0,
+            Address::AbsoluteForTest(reinterpret_cast<uword>(&constant0)));
   // XMM1 = 5.0f, 6.0f, 7.0f, 8.0f.
-  __ movups(XMM1, Address::Absolute(reinterpret_cast<uword>(&constant1)));
+  __ movups(XMM1,
+            Address::AbsoluteForTest(reinterpret_cast<uword>(&constant1)));
   // XMM0 = 3.0f, 7.0f, 4.0f, 8.0f.
   __ unpckhps(XMM0, XMM1);
   // XMM1 = 3.0f, 7.0f, 4.0f, 8.0f.
@@ -2257,9 +2306,11 @@ ASSEMBLER_TEST_GENERATE(PackedUnpackLowPair, assembler) {
     float d;
   } constant1 = {5.0, 6.0, 7.0, 8.0};
   // XMM0 = 1.0f, 2.0f, 3.0f, 4.0f.
-  __ movups(XMM0, Address::Absolute(reinterpret_cast<uword>(&constant0)));
+  __ movups(XMM0,
+            Address::AbsoluteForTest(reinterpret_cast<uword>(&constant0)));
   // XMM1 = 5.0f, 6.0f, 7.0f, 8.0f.
-  __ movups(XMM1, Address::Absolute(reinterpret_cast<uword>(&constant1)));
+  __ movups(XMM1,
+            Address::AbsoluteForTest(reinterpret_cast<uword>(&constant1)));
   // XMM0 = 1.0f, 2.0f, 5.0f, 6.0f.
   __ unpcklpd(XMM0, XMM1);
   // XMM1 = 1.0f, 2.0f, 5.0f, 6.0f.
@@ -2307,9 +2358,11 @@ ASSEMBLER_TEST_GENERATE(PackedUnpackHighPair, assembler) {
     float d;
   } constant1 = {5.0, 6.0, 7.0, 8.0};
   // XMM0 = 1.0f, 2.0f, 3.0f, 4.0f.
-  __ movups(XMM0, Address::Absolute(reinterpret_cast<uword>(&constant0)));
+  __ movups(XMM0,
+            Address::AbsoluteForTest(reinterpret_cast<uword>(&constant0)));
   // XMM1 = 5.0f, 6.0f, 7.0f, 8.0f.
-  __ movups(XMM1, Address::Absolute(reinterpret_cast<uword>(&constant1)));
+  __ movups(XMM1,
+            Address::AbsoluteForTest(reinterpret_cast<uword>(&constant1)));
   // XMM0 = 3.0f, 4.0f, 7.0f, 8.0f.
   __ unpckhpd(XMM0, XMM1);
   // XMM1 = 3.0f, 4.0f, 7.0f, 8.0f.
@@ -2352,8 +2405,10 @@ ASSEMBLER_TEST_GENERATE(PackedDoubleAdd, assembler) {
     double a;
     double b;
   } constant1 = {3.0, 4.0};
-  __ movups(XMM0, Address::Absolute(reinterpret_cast<uword>(&constant0)));
-  __ movups(XMM1, Address::Absolute(reinterpret_cast<uword>(&constant1)));
+  __ movups(XMM0,
+            Address::AbsoluteForTest(reinterpret_cast<uword>(&constant0)));
+  __ movups(XMM1,
+            Address::AbsoluteForTest(reinterpret_cast<uword>(&constant1)));
   __ addpd(XMM0, XMM1);
   __ pushl(EAX);
   __ pushl(EAX);
@@ -2390,8 +2445,10 @@ ASSEMBLER_TEST_GENERATE(PackedDoubleSub, assembler) {
     double a;
     double b;
   } constant1 = {3.0, 4.0};
-  __ movups(XMM0, Address::Absolute(reinterpret_cast<uword>(&constant0)));
-  __ movups(XMM1, Address::Absolute(reinterpret_cast<uword>(&constant1)));
+  __ movups(XMM0,
+            Address::AbsoluteForTest(reinterpret_cast<uword>(&constant0)));
+  __ movups(XMM1,
+            Address::AbsoluteForTest(reinterpret_cast<uword>(&constant1)));
   __ subpd(XMM0, XMM1);
   __ pushl(EAX);
   __ pushl(EAX);
@@ -2424,7 +2481,9 @@ ASSEMBLER_TEST_GENERATE(PackedDoubleNegate, assembler) {
     double a;
     double b;
   } constant0 = {1.0, 2.0};
-  __ movups(XMM0, Address::Absolute(reinterpret_cast<uword>(&constant0)));
+  EnterTestWithThread(assembler);
+  __ movups(XMM0,
+            Address::AbsoluteForTest(reinterpret_cast<uword>(&constant0)));
   __ negatepd(XMM0);
   __ pushl(EAX);
   __ pushl(EAX);
@@ -2432,22 +2491,28 @@ ASSEMBLER_TEST_GENERATE(PackedDoubleNegate, assembler) {
   __ fldl(Address(ESP, 0));
   __ popl(EAX);
   __ popl(EAX);
+  LeaveTestWithThread(assembler);
   __ ret();
 }
 
 ASSEMBLER_TEST_RUN(PackedDoubleNegate, test) {
-  typedef double (*PackedDoubleNegate)();
-  double res = reinterpret_cast<PackedDoubleNegate>(test->entry())();
+  double res = test->InvokeWithCodeAndThread<double>();
   EXPECT_FLOAT_EQ(-1.0, res, 0.000001f);
   EXPECT_DISASSEMBLY(
+      "push esi\n"
+      "mov esi,[esp+0xc]\n"
       "movups xmm0,[0x........]\n"
-      "xorpd xmm0,[0x........]\n"
+      "push eax\n"
+      "mov eax,[esi+0x148]\n"
+      "xorpd xmm0,[eax]\n"
+      "pop eax\n"
       "push eax\n"
       "push eax\n"
       "movsd [esp],xmm0\n"
       "fld_d [esp]\n"
       "pop eax\n"
       "pop eax\n"
+      "pop esi\n"
       "ret\n");
 }
 
@@ -2456,7 +2521,9 @@ ASSEMBLER_TEST_GENERATE(PackedDoubleAbsolute, assembler) {
     double a;
     double b;
   } constant0 = {-1.0, 2.0};
-  __ movups(XMM0, Address::Absolute(reinterpret_cast<uword>(&constant0)));
+  EnterTestWithThread(assembler);
+  __ movups(XMM0,
+            Address::AbsoluteForTest(reinterpret_cast<uword>(&constant0)));
   __ abspd(XMM0);
   __ pushl(EAX);
   __ pushl(EAX);
@@ -2464,22 +2531,28 @@ ASSEMBLER_TEST_GENERATE(PackedDoubleAbsolute, assembler) {
   __ fldl(Address(ESP, 0));
   __ popl(EAX);
   __ popl(EAX);
+  LeaveTestWithThread(assembler);
   __ ret();
 }
 
 ASSEMBLER_TEST_RUN(PackedDoubleAbsolute, test) {
-  typedef double (*PackedDoubleAbsolute)();
-  double res = reinterpret_cast<PackedDoubleAbsolute>(test->entry())();
+  double res = test->InvokeWithCodeAndThread<double>();
   EXPECT_FLOAT_EQ(1.0, res, 0.000001f);
   EXPECT_DISASSEMBLY(
+      "push esi\n"
+      "mov esi,[esp+0xc]\n"
       "movups xmm0,[0x........]\n"
-      "andpd xmm0,[0x........]\n"
+      "push eax\n"
+      "mov eax,[esi+0x14c]\n"
+      "andpd xmm0,[eax]\n"
+      "pop eax\n"
       "push eax\n"
       "push eax\n"
       "movsd [esp],xmm0\n"
       "fld_d [esp]\n"
       "pop eax\n"
       "pop eax\n"
+      "pop esi\n"
       "ret\n");
 }
 
@@ -2492,8 +2565,10 @@ ASSEMBLER_TEST_GENERATE(PackedDoubleMul, assembler) {
     double a;
     double b;
   } constant1 = {3.0, 4.0};
-  __ movups(XMM0, Address::Absolute(reinterpret_cast<uword>(&constant0)));
-  __ movups(XMM1, Address::Absolute(reinterpret_cast<uword>(&constant1)));
+  __ movups(XMM0,
+            Address::AbsoluteForTest(reinterpret_cast<uword>(&constant0)));
+  __ movups(XMM1,
+            Address::AbsoluteForTest(reinterpret_cast<uword>(&constant1)));
   __ mulpd(XMM0, XMM1);
   __ pushl(EAX);
   __ pushl(EAX);
@@ -2530,8 +2605,10 @@ ASSEMBLER_TEST_GENERATE(PackedDoubleDiv, assembler) {
     double a;
     double b;
   } constant1 = {3.0, 4.0};
-  __ movups(XMM0, Address::Absolute(reinterpret_cast<uword>(&constant0)));
-  __ movups(XMM1, Address::Absolute(reinterpret_cast<uword>(&constant1)));
+  __ movups(XMM0,
+            Address::AbsoluteForTest(reinterpret_cast<uword>(&constant0)));
+  __ movups(XMM1,
+            Address::AbsoluteForTest(reinterpret_cast<uword>(&constant1)));
   __ divpd(XMM0, XMM1);
   __ pushl(EAX);
   __ pushl(EAX);
@@ -2564,7 +2641,8 @@ ASSEMBLER_TEST_GENERATE(PackedDoubleSqrt, assembler) {
     double a;
     double b;
   } constant0 = {16.0, 2.0};
-  __ movups(XMM0, Address::Absolute(reinterpret_cast<uword>(&constant0)));
+  __ movups(XMM0,
+            Address::AbsoluteForTest(reinterpret_cast<uword>(&constant0)));
   __ sqrtpd(XMM0);
   __ pushl(EAX);
   __ pushl(EAX);
@@ -2600,8 +2678,10 @@ ASSEMBLER_TEST_GENERATE(PackedDoubleMin, assembler) {
     double a;
     double b;
   } constant1 = {3.0, 4.0};
-  __ movups(XMM0, Address::Absolute(reinterpret_cast<uword>(&constant0)));
-  __ movups(XMM1, Address::Absolute(reinterpret_cast<uword>(&constant1)));
+  __ movups(XMM0,
+            Address::AbsoluteForTest(reinterpret_cast<uword>(&constant0)));
+  __ movups(XMM1,
+            Address::AbsoluteForTest(reinterpret_cast<uword>(&constant1)));
   __ minpd(XMM0, XMM1);
   __ pushl(EAX);
   __ pushl(EAX);
@@ -2638,8 +2718,10 @@ ASSEMBLER_TEST_GENERATE(PackedDoubleMax, assembler) {
     double a;
     double b;
   } constant1 = {3.0, 4.0};
-  __ movups(XMM0, Address::Absolute(reinterpret_cast<uword>(&constant0)));
-  __ movups(XMM1, Address::Absolute(reinterpret_cast<uword>(&constant1)));
+  __ movups(XMM0,
+            Address::AbsoluteForTest(reinterpret_cast<uword>(&constant0)));
+  __ movups(XMM1,
+            Address::AbsoluteForTest(reinterpret_cast<uword>(&constant1)));
   __ maxpd(XMM0, XMM1);
   __ pushl(EAX);
   __ pushl(EAX);
@@ -2672,7 +2754,8 @@ ASSEMBLER_TEST_GENERATE(PackedDoubleShuffle, assembler) {
     double a;
     double b;
   } constant0 = {2.0, 9.0};
-  __ movups(XMM0, Address::Absolute(reinterpret_cast<uword>(&constant0)));
+  __ movups(XMM0,
+            Address::AbsoluteForTest(reinterpret_cast<uword>(&constant0)));
   // Splat Y across all lanes.
   __ shufpd(XMM0, XMM0, Immediate(0x33));
   // Splat X across all lanes.
@@ -2709,7 +2792,8 @@ ASSEMBLER_TEST_GENERATE(PackedDoubleToSingle, assembler) {
     double a;
     double b;
   } constant0 = {9.0, 2.0};
-  __ movups(XMM1, Address::Absolute(reinterpret_cast<uword>(&constant0)));
+  __ movups(XMM1,
+            Address::AbsoluteForTest(reinterpret_cast<uword>(&constant0)));
   __ cvtpd2ps(XMM0, XMM1);
   __ pushl(EAX);
   __ movss(Address(ESP, 0), XMM0);
@@ -2739,7 +2823,8 @@ ASSEMBLER_TEST_GENERATE(PackedSingleToDouble, assembler) {
     float c;
     float d;
   } constant0 = {9.0f, 2.0f, 3.0f, 4.0f};
-  __ movups(XMM1, Address::Absolute(reinterpret_cast<uword>(&constant0)));
+  __ movups(XMM1,
+            Address::AbsoluteForTest(reinterpret_cast<uword>(&constant0)));
   __ cvtps2pd(XMM0, XMM1);
   __ pushl(EAX);
   __ pushl(EAX);
@@ -3484,7 +3569,8 @@ ASSEMBLER_TEST_RUN(DoubleToDoubleTrunc, test) {
 static const double kDoubleConst = 3.226;
 
 ASSEMBLER_TEST_GENERATE(GlobalAddress, assembler) {
-  __ movsd(XMM0, Address::Absolute(reinterpret_cast<uword>(&kDoubleConst)));
+  __ movsd(XMM0,
+           Address::AbsoluteForTest(reinterpret_cast<uword>(&kDoubleConst)));
   __ pushl(EAX);
   __ pushl(EAX);
   __ movsd(Address(ESP, 0), XMM0);
@@ -3687,32 +3773,40 @@ ASSEMBLER_TEST_RUN(XmmAlu, test) {
 }
 
 ASSEMBLER_TEST_GENERATE(FloatNegate, assembler) {
-  __ movss(XMM0, Address(ESP, target::kWordSize));
-  __ FloatNegate(XMM0);
+  EnterTestWithThread(assembler);
+  __ movss(XMM0, Address(ESP, 4 * target::kWordSize));
+  __ negateps(XMM0);
   __ pushl(EAX);
   __ movss(Address(ESP, 0), XMM0);
   __ flds(Address(ESP, 0));
   __ popl(EAX);
+  LeaveTestWithThread(assembler);
   __ ret();
 }
 
 ASSEMBLER_TEST_RUN(FloatNegate, test) {
-  typedef float (*FloatNegateCode)(float f);
   const float kFloatConst = 12.345;
-  float res = reinterpret_cast<FloatNegateCode>(test->entry())(kFloatConst);
+  float res = test->InvokeWithCodeAndThread<float>(kFloatConst);
   EXPECT_FLOAT_EQ(-kFloatConst, res, 0.0001);
   EXPECT_DISASSEMBLY(
-      "movss xmm0,[esp+0x4]\n"
-      "xorps xmm0,[0x........]\n"
+      "push esi\n"
+      "mov esi,[esp+0xc]\n"
+      "movss xmm0,[esp+0x10]\n"
+      "push eax\n"
+      "mov eax,[esi+0x154]\n"
+      "xorps xmm0,[eax]\n"
+      "pop eax\n"
       "push eax\n"
       "movss [esp],xmm0\n"
       "fld_s [esp]\n"
       "pop eax\n"
+      "pop esi\n"
       "ret\n");
 }
 
 ASSEMBLER_TEST_GENERATE(DoubleNegate, assembler) {
-  __ movsd(XMM0, Address(ESP, target::kWordSize));
+  EnterTestWithThread(assembler);
+  __ movsd(XMM0, Address(ESP, 4 * target::kWordSize));
   __ DoubleNegate(XMM0);
   __ pushl(EAX);
   __ pushl(EAX);
@@ -3720,23 +3814,29 @@ ASSEMBLER_TEST_GENERATE(DoubleNegate, assembler) {
   __ fldl(Address(ESP, 0));
   __ popl(EAX);
   __ popl(EAX);
+  LeaveTestWithThread(assembler);
   __ ret();
 }
 
 ASSEMBLER_TEST_RUN(DoubleNegate, test) {
-  typedef double (*DoubleNegateCode)(double f);
   const double kDoubleConst = 12.345;
-  double res = reinterpret_cast<DoubleNegateCode>(test->entry())(kDoubleConst);
+  double res = test->InvokeWithCodeAndThread<double>(kDoubleConst);
   EXPECT_FLOAT_EQ(-kDoubleConst, res, 0.0001);
   EXPECT_DISASSEMBLY(
-      "movsd xmm0,[esp+0x4]\n"
-      "xorpd xmm0,[0x........]\n"
+      "push esi\n"
+      "mov esi,[esp+0xc]\n"
+      "movsd xmm0,[esp+0x10]\n"
+      "push eax\n"
+      "mov eax,[esi+0x148]\n"
+      "xorpd xmm0,[eax]\n"
+      "pop eax\n"
       "push eax\n"
       "push eax\n"
       "movsd [esp],xmm0\n"
       "fld_d [esp]\n"
       "pop eax\n"
       "pop eax\n"
+      "pop esi\n"
       "ret\n");
 }
 
@@ -4194,7 +4294,8 @@ ASSEMBLER_TEST_RUN(Pxor, test) {
 }
 
 ASSEMBLER_TEST_GENERATE(Orpd, assembler) {
-  __ movsd(XMM0, Address(ESP, target::kWordSize));
+  EnterTestWithThread(assembler);
+  __ movsd(XMM0, Address(ESP, 4 * target::kWordSize));
   __ xorpd(XMM1, XMM1);
   __ DoubleNegate(XMM1);
   __ orpd(XMM0, XMM1);
@@ -4204,17 +4305,22 @@ ASSEMBLER_TEST_GENERATE(Orpd, assembler) {
   __ fldl(Address(ESP, 0));
   __ popl(EAX);
   __ popl(EAX);
+  LeaveTestWithThread(assembler);
   __ ret();
 }
 
 ASSEMBLER_TEST_RUN(Orpd, test) {
-  typedef double (*OrpdCode)(double d);
-  double res = reinterpret_cast<OrpdCode>(test->entry())(12.56e3);
+  double res = test->InvokeWithCodeAndThread<double>(12.56e3);
   EXPECT_FLOAT_EQ(-12.56e3, res, 0.0);
   EXPECT_DISASSEMBLY(
-      "movsd xmm0,[esp+0x4]\n"
+      "push esi\n"
+      "mov esi,[esp+0xc]\n"
+      "movsd xmm0,[esp+0x10]\n"
       "xorpd xmm1,xmm1\n"
-      "xorpd xmm1,[0x........]\n"
+      "push eax\n"
+      "mov eax,[esi+0x148]\n"
+      "xorpd xmm1,[eax]\n"
+      "pop eax\n"
       "orpd xmm0,xmm1\n"
       "push eax\n"
       "push eax\n"
@@ -4222,6 +4328,7 @@ ASSEMBLER_TEST_RUN(Orpd, test) {
       "fld_d [esp]\n"
       "pop eax\n"
       "pop eax\n"
+      "pop esi\n"
       "ret\n");
 }
 
@@ -4229,8 +4336,8 @@ ASSEMBLER_TEST_GENERATE(Pextrd0, assembler) {
   if (TargetCPUFeatures::sse4_1_supported()) {
     __ movsd(XMM0, Address(ESP, target::kWordSize));
     __ pextrd(EAX, XMM0, Immediate(0));
+    __ ret();
   }
-  __ ret();
 }
 
 ASSEMBLER_TEST_RUN(Pextrd0, test) {
@@ -4238,19 +4345,19 @@ ASSEMBLER_TEST_RUN(Pextrd0, test) {
     typedef int32_t (*PextrdCode0)(double d);
     int32_t res = reinterpret_cast<PextrdCode0>(test->entry())(123456789);
     EXPECT_EQ(0x54000000, res);
+    EXPECT_DISASSEMBLY(
+        "movsd xmm0,[esp+0x4]\n"
+        "pextrd eax,xmm0,0\n"
+        "ret\n");
   }
-  EXPECT_DISASSEMBLY(
-      "movsd xmm0,[esp+0x4]\n"
-      "pextrd eax,xmm0,0\n"
-      "ret\n");
 }
 
 ASSEMBLER_TEST_GENERATE(Pextrd1, assembler) {
   if (TargetCPUFeatures::sse4_1_supported()) {
     __ movsd(XMM0, Address(ESP, target::kWordSize));
     __ pextrd(EAX, XMM0, Immediate(1));
+    __ ret();
   }
-  __ ret();
 }
 
 ASSEMBLER_TEST_RUN(Pextrd1, test) {
@@ -4258,11 +4365,11 @@ ASSEMBLER_TEST_RUN(Pextrd1, test) {
     typedef int32_t (*PextrdCode1)(double d);
     int32_t res = reinterpret_cast<PextrdCode1>(test->entry())(123456789);
     EXPECT_EQ(0x419d6f34, res);
+    EXPECT_DISASSEMBLY(
+        "movsd xmm0,[esp+0x4]\n"
+        "pextrd eax,xmm0,1\n"
+        "ret\n");
   }
-  EXPECT_DISASSEMBLY(
-      "movsd xmm0,[esp+0x4]\n"
-      "pextrd eax,xmm0,1\n"
-      "ret\n");
 }
 
 ASSEMBLER_TEST_GENERATE(Pmovsxdq, assembler) {
@@ -4270,8 +4377,8 @@ ASSEMBLER_TEST_GENERATE(Pmovsxdq, assembler) {
     __ movsd(XMM0, Address(ESP, target::kWordSize));
     __ pmovsxdq(XMM0, XMM0);
     __ pextrd(EAX, XMM0, Immediate(1));
+    __ ret();
   }
-  __ ret();
 }
 
 ASSEMBLER_TEST_RUN(Pmovsxdq, test) {
@@ -4279,12 +4386,12 @@ ASSEMBLER_TEST_RUN(Pmovsxdq, test) {
     typedef int32_t (*PmovsxdqCode)(double d);
     int32_t res = reinterpret_cast<PmovsxdqCode>(test->entry())(123456789);
     EXPECT_EQ(0, res);
+    EXPECT_DISASSEMBLY(
+        "movsd xmm0,[esp+0x4]\n"
+        "pmovsxdq xmm0,xmm0\n"
+        "pextrd eax,xmm0,1\n"
+        "ret\n");
   }
-  EXPECT_DISASSEMBLY(
-      "movsd xmm0,[esp+0x4]\n"
-      "pmovsxdq xmm0,xmm0\n"
-      "pextrd eax,xmm0,1\n"
-      "ret\n");
 }
 
 ASSEMBLER_TEST_GENERATE(Pcmpeqq, assembler) {
@@ -4293,8 +4400,8 @@ ASSEMBLER_TEST_GENERATE(Pcmpeqq, assembler) {
     __ xorpd(XMM1, XMM1);
     __ pcmpeqq(XMM0, XMM1);
     __ movd(EAX, XMM0);
+    __ ret();
   }
-  __ ret();
 }
 
 ASSEMBLER_TEST_RUN(Pcmpeqq, test) {
@@ -4302,13 +4409,13 @@ ASSEMBLER_TEST_RUN(Pcmpeqq, test) {
     typedef int32_t (*PcmpeqqCode)(double d);
     int32_t res = reinterpret_cast<PcmpeqqCode>(test->entry())(0);
     EXPECT_EQ(-1, res);
+    EXPECT_DISASSEMBLY(
+        "movsd xmm0,[esp+0x4]\n"
+        "xorpd xmm1,xmm1\n"
+        "pcmpeqq xmm0,xmm1\n"
+        "movd eax,xmm0\n"
+        "ret\n");
   }
-  EXPECT_DISASSEMBLY(
-      "movsd xmm0,[esp+0x4]\n"
-      "xorpd xmm1,xmm1\n"
-      "pcmpeqq xmm0,xmm1\n"
-      "movd eax,xmm0\n"
-      "ret\n");
 }
 
 ASSEMBLER_TEST_GENERATE(AndPd, assembler) {
@@ -4362,7 +4469,8 @@ ASSEMBLER_TEST_RUN(Movq, test) {
 }
 
 ASSEMBLER_TEST_GENERATE(DoubleAbs, assembler) {
-  __ movsd(XMM0, Address(ESP, target::kWordSize));
+  EnterTestWithThread(assembler);
+  __ movsd(XMM0, Address(ESP, 4 * target::kWordSize));
   __ DoubleAbs(XMM0);
   __ pushl(EAX);
   __ pushl(EAX);
@@ -4370,26 +4478,32 @@ ASSEMBLER_TEST_GENERATE(DoubleAbs, assembler) {
   __ fldl(Address(ESP, 0));
   __ popl(EAX);
   __ popl(EAX);
+  LeaveTestWithThread(assembler);
   __ ret();
 }
 
 ASSEMBLER_TEST_RUN(DoubleAbs, test) {
-  typedef double (*DoubleAbsCode)(double d);
   double val = -12.45;
-  double res = reinterpret_cast<DoubleAbsCode>(test->entry())(val);
+  double res = test->InvokeWithCodeAndThread<double>(val);
   EXPECT_FLOAT_EQ(-val, res, 0.001);
   val = 12.45;
-  res = reinterpret_cast<DoubleAbsCode>(test->entry())(val);
+  res = test->InvokeWithCodeAndThread<double>(val);
   EXPECT_FLOAT_EQ(val, res, 0.001);
   EXPECT_DISASSEMBLY(
-      "movsd xmm0,[esp+0x4]\n"
-      "andpd xmm0,[0x........]\n"
+      "push esi\n"
+      "mov esi,[esp+0xc]\n"
+      "movsd xmm0,[esp+0x10]\n"
+      "push eax\n"
+      "mov eax,[esi+0x14c]\n"
+      "andpd xmm0,[eax]\n"
+      "pop eax\n"
       "push eax\n"
       "push eax\n"
       "movsd [esp],xmm0\n"
       "fld_d [esp]\n"
       "pop eax\n"
       "pop eax\n"
+      "pop esi\n"
       "ret\n");
 }
 
@@ -4587,10 +4701,34 @@ ASSEMBLER_TEST_RUN(TestLoadDImmediate, test) {
       "ret\n");
 }
 
+static void EnterTestFrame(Assembler* assembler) {
+  constexpr intptr_t kArg1Offset = 2 * target::kWordSize;
+  constexpr intptr_t kArg2Offset = 3 * target::kWordSize;
+  __ EnterFrame(0);
+  __ pushl(THR);
+  __ movl(THR, Address(EBP, kArg2Offset));
+  __ pushl(LikeABI::CODE);
+  __ pushl(LikeABI::PP);
+  __ pushl(EAX);
+  __ movl(EAX, Address(EBP, kArg1Offset));
+  __ movl(LikeABI::CODE, EAX);
+  __ popl(EAX);
+  __ LoadPoolPointer(PP);
+}
+
+static void LeaveTestFrame(Assembler* assembler) {
+  __ popl(LikeABI::PP);
+  __ popl(LikeABI::CODE);
+  __ popl(THR);
+  __ LeaveFrame();
+}
+
 ASSEMBLER_TEST_GENERATE(TestObjectCompare, assembler) {
   ObjectStore* object_store = IsolateGroup::Current()->object_store();
   const Object& obj = Object::ZoneHandle(object_store->smi_class());
   Label fail;
+  __ set_constant_pool_allowed(true);
+  EnterTestFrame(assembler);
   __ LoadObject(EAX, obj);
   __ CompareObject(EAX, obj);
   __ j(NOT_EQUAL, &fail);
@@ -4598,15 +4736,17 @@ ASSEMBLER_TEST_GENERATE(TestObjectCompare, assembler) {
   __ CompareObject(ECX, obj);
   __ j(NOT_EQUAL, &fail);
   __ movl(EAX, Immediate(1));  // OK
+  LeaveTestFrame(assembler);
   __ ret();
   __ Bind(&fail);
   __ movl(EAX, Immediate(0));  // Fail.
+  LeaveTestFrame(assembler);
   __ ret();
 }
 
 ASSEMBLER_TEST_RUN(TestObjectCompare, test) {
   typedef bool (*TestObjectCompare)();
-  bool res = reinterpret_cast<TestObjectCompare>(test->entry())();
+  bool res = test->InvokeWithCodeAndThread<bool>();
   EXPECT_EQ(true, res);
   // Disassembly contains absolute addresses of objects that vary between runs.
 }

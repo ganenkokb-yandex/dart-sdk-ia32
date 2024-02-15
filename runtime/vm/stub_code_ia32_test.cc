@@ -79,7 +79,7 @@ static void GenerateCallToCallLeafRuntimeStub(compiler::Assembler* assembler,
   const Smi& lhs_index = Smi::ZoneHandle(Smi::New(lhs_index_value));
   const Smi& rhs_index = Smi::ZoneHandle(Smi::New(rhs_index_value));
   const Smi& length = Smi::ZoneHandle(Smi::New(length_value));
-  __ enter(compiler::Immediate(0));
+  __ EnterStubFrame();
   {
     compiler::LeafRuntimeScope rt(assembler,
                                   /*frame_size=*/4 * kWordSize,
@@ -94,7 +94,7 @@ static void GenerateCallToCallLeafRuntimeStub(compiler::Assembler* assembler,
     __ movl(compiler::Address(ESP, 3 * kWordSize), EAX);  // Push argument 4.
     rt.Call(kCaseInsensitiveCompareUCS2RuntimeEntry, 4);
   }
-  __ leave();
+  __ LeaveStubFrame();
   __ ret();  // Return value is in EAX.
 }
 
@@ -106,7 +106,8 @@ ISOLATE_UNIT_TEST_CASE(CallLeafRuntimeStubCode) {
   intptr_t rhs_index_value = 2;
   intptr_t length_value = 2;
   const char* kName = "Test_CallLeafRuntimeStubCode";
-  compiler::Assembler assembler(nullptr);
+  compiler::ObjectPoolBuilder object_pool_builder;
+  compiler::Assembler assembler(&object_pool_builder);
   GenerateCallToCallLeafRuntimeStub(&assembler, str_value, lhs_index_value,
                                     rhs_index_value, length_value);
   SafepointWriteRwLocker ml(thread, thread->isolate_group()->program_lock());

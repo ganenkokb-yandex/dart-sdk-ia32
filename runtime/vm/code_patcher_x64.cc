@@ -16,6 +16,137 @@
 
 namespace dart {
 
+namespace {
+  const int32_t code_pc_offset = 31;
+  const int32_t arg_pc_offset = 17;
+  const int32_t code_data_offset = 17;
+  const int32_t code_rcx_pc_offset = 17;
+  const int32_t before_code_pc_skip = 0;
+  const int32_t after_code_pc_skip = 0;
+  static int16_t call_pattern[] = {
+      // 0:  49 8b b6 ff ff 00 00    mov    rsi,QWORD PTR [r14+0xffff]
+      // 7:  ff 56 ff                call   QWORD PTR [rsi-0x1]
+      0x49, 0x8b, 0xb6, -1, -1, 0x00, 0x00,
+      0xff, 0x56, -1,
+  };
+  static int16_t load_code_disp8[] = {
+      // 0:  49 89 8e ff ff 00 00    mov    QWORD PTR [r14+0xffff],rcx
+      // 7:  49 8b 8e ff ff 00 00    mov    rcx,QWORD PTR [r14+0xffff]
+      // e:  49 89 86 ff ff 00 00    mov    QWORD PTR [r14+0xffff],rax
+      // 15: 49 8b 86 ff ff 00 00    mov    rax,QWORD PTR [r14+0xffff]
+      // 1c: 48 8b 48 ff             mov    rcx,QWORD PTR [rax-0x1]
+      // 20: 49 89 86 ff ff 00 00    mov    QWORD PTR [r14+0xffff],rax
+      // 27: 49 8b 86 ff ff 00 00    mov    rax,QWORD PTR [r14+0xffff]
+      // 2e: 49 89 8e ff ff 00 00    mov    QWORD PTR [r14+0xffff],rcx
+      // 35: 49 8b 8e ff ff 00 00    mov    rcx,QWORD PTR [r14+0xffff]
+      0x49, 0x89, 0x8e, -1, -1, 0x00, 0x00,
+      0x49, 0x8b, 0x8e, -1, -1, 0x00, 0x00,
+      0x49, 0x89, 0x86, -1, -1, 0x00, 0x00,
+      0x49, 0x8b, 0x86, -1, -1, 0x00, 0x00,
+      0x48, 0x8b, 0x48, -1,
+      0x49, 0x89, 0x86, -1, -1, 0x00, 0x00,
+      0x49, 0x8b, 0x86, -1, -1, 0x00, 0x00,
+      0x49, 0x89, 0x8e, -1, -1, 0x00, 0x00,
+      0x49, 0x8b, 0x8e, -1, -1, 0x00, 0x00,
+  };
+  static int16_t load_code_disp32[] = {
+      // 0:  49 89 8e ff ff 00 00    mov    QWORD PTR [r14+0xffff],rcx
+      // 7:  49 8b 8e ff ff 00 00    mov    rcx,QWORD PTR [r14+0xffff]
+      // e:  49 89 86 ff ff 00 00    mov    QWORD PTR [r14+0xffff],rax
+      // 15: 49 8b 86 ff ff 00 00    mov    rax,QWORD PTR [r14+0xffff]
+      // 1c: 48 8b 88 ff ff ff ff    mov    rcx,QWORD PTR [rax-0x1]
+      // 23: 49 89 86 ff ff 00 00    mov    QWORD PTR [r14+0xffff],rax
+      // 2a: 49 8b 86 ff ff 00 00    mov    rax,QWORD PTR [r14+0xffff]
+      // 31: 49 89 8e ff ff 00 00    mov    QWORD PTR [r14+0xffff],rcx
+      // 38: 49 8b 8e ff ff 00 00    mov    rcx,QWORD PTR [r14+0xffff]
+      0x49, 0x89, 0x8e, -1, -1, 0x00, 0x00,
+      0x49, 0x8b, 0x8e, -1, -1, 0x00, 0x00,
+      0x49, 0x89, 0x86, -1, -1, 0x00, 0x00,
+      0x49, 0x8b, 0x86, -1, -1, 0x00, 0x00,
+      0x48, 0x8b, 0x88, -1, -1, -1, -1,
+      0x49, 0x89, 0x86, -1, -1, 0x00, 0x00,
+      0x49, 0x8b, 0x86, -1, -1, 0x00, 0x00,
+      0x49, 0x89, 0x8e, -1, -1, 0x00, 0x00,
+      0x49, 0x8b, 0x8e, -1, -1, 0x00, 0x00,
+  };
+  static int16_t load_code_disp8_rcx[] = {
+      // 0:  49 89 86 ff ff 00 00    mov    QWORD PTR [r14+0xffff],rax
+      // 7:  49 8b 86 ff ff 00 00    mov    rax,QWORD PTR [r14+0xffff]
+      // e:  48 8b 48 ff             mov    rcx,QWORD PTR [rax-0x1]
+      // 12: 49 89 86 ff ff 00 00    mov    QWORD PTR [r14+0xffff],rax
+      // 19: 49 8b 86 ff ff 00 00    mov    rax,QWORD PTR [r14+0xffff]
+      0x49, 0x89, 0x86, -1, -1, 0x00, 0x00,
+      0x49, 0x8b, 0x86, -1, -1, 0x00, 0x00,
+      0x48, 0x8b, 0x48, -1,
+      0x49, 0x89, 0x86, -1, -1, 0x00, 0x00,
+      0x49, 0x8b, 0x86, -1, -1, 0x00, 0x00,
+  };
+  static int16_t load_code_disp32_rcx[] = {
+      // 0:  49 89 86 ff ff 00 00    mov    QWORD PTR [r14+0xffff],rax
+      // 7:  49 8b 86 ff ff 00 00    mov    rax,QWORD PTR [r14+0xffff]
+      // e:  48 8b 88 ff ff ff ff    mov    rcx,QWORD PTR [rax-0x1]
+      // 15: 49 89 86 ff ff 00 00    mov    QWORD PTR [r14+0xffff],rax
+      // 1c: 49 8b 86 ff ff 00 00    mov    rax,QWORD PTR [r14+0xffff]
+      0x49, 0x89, 0x86, -1, -1, 0x00, 0x00,
+      0x49, 0x8b, 0x86, -1, -1, 0x00, 0x00,
+      0x48, 0x8b, 0x88, -1, -1, -1, -1,
+      0x49, 0x89, 0x86, -1, -1, 0x00, 0x00,
+      0x49, 0x8b, 0x86, -1, -1, 0x00, 0x00,
+  };
+  static int16_t load_argument_disp8[] = {
+      // 0:  49 89 8e ff ff 00 00    mov    QWORD PTR [r14+0xffff],rcx
+      // 7:  49 8b 8e ff ff 00 00    mov    rcx,QWORD PTR [r14+0xffff]
+      // e:  48 8b 59 ff             mov    rbx,QWORD PTR [rcx-0x1]
+      // 12: 49 89 8e ff ff 00 00    mov    QWORD PTR [r14+0xffff],rcx
+      // 19: 49 8b 8e ff ff 00 00    mov    rcx,QWORD PTR [r14+0xffff]
+      // 20: 49 89 9e ff ff 00 00    mov    QWORD PTR [r14+0xffff],rbx
+      0x49, 0x89, 0x8e, -1, -1, 0x00, 0x00,
+      0x49, 0x8b, 0x8e, -1, -1, 0x00, 0x00,
+      0x48, 0x8b, 0x59, -1,
+      0x49, 0x89, 0x8e, -1, -1, 0x00, 0x00,
+      0x49, 0x8b, 0x8e, -1, -1, 0x00, 0x00,
+      0x49, 0x89, 0x9e, -1, -1, 0x00, 0x00,
+  };
+  static int16_t load_argument_disp32[] = {
+      // 0:  49 89 8e ff ff 00 00    mov    QWORD PTR [r14+0xffff],rcx
+      // 7:  49 8b 8e ff ff 00 00    mov    rcx,QWORD PTR [r14+0xffff]
+      // e:  48 8b 99 ff ff ff ff    mov    rbx,QWORD PTR [rcx-0x1]
+      // 15: 49 89 8e ff ff 00 00    mov    QWORD PTR [r14+0xffff],rcx
+      // 1c: 49 8b 8e ff ff 00 00    mov    rcx,QWORD PTR [r14+0xffff]
+      // 23: 49 89 9e ff ff 00 00    mov    QWORD PTR [r14+0xffff],rbx
+      0x49, 0x89, 0x8e, -1, -1, 0x00, 0x00,
+      0x49, 0x8b, 0x8e, -1, -1, 0x00, 0x00,
+      0x48, 0x8b, 0x99, -1, -1, -1, -1,
+      0x49, 0x89, 0x8e, -1, -1, 0x00, 0x00,
+      0x49, 0x8b, 0x8e, -1, -1, 0x00, 0x00,
+      0x49, 0x89, 0x9e, -1, -1, 0x00, 0x00,
+  };
+  static int16_t load_data_disp8[] = {
+      // 0:  49 89 8e ff ff 00 00    mov    QWORD PTR [r14+0xffff],rcx
+      // 7:  49 8b 8e ff ff 00 00    mov    rcx,QWORD PTR [r14+0xffff]
+      // e:  48 8b 59 ff             mov    rbx,QWORD PTR [rcx-0x1]
+      // 12: 49 89 8e ff ff 00 00    mov    QWORD PTR [r14+0xffff],rcx
+      // 19: 49 8b 8e ff ff 00 00    mov    rcx,QWORD PTR [r14+0xffff]
+      0x49, 0x89, 0x8e, -1, -1, 0x00, 0x00,
+      0x49, 0x8b, 0x8e, -1, -1, 0x00, 0x00,
+      0x48, 0x8b, 0x59, -1,
+      0x49, 0x89, 0x8e, -1, -1, 0x00, 0x00,
+      0x49, 0x8b, 0x8e, -1, -1, 0x00, 0x00,
+  };
+  static int16_t load_data_disp32[] = {
+      // 0:  49 89 8e ff ff 00 00    mov    QWORD PTR [r14+0xffff],rcx
+      // 7:  49 8b 8e ff ff 00 00    mov    rcx,QWORD PTR [r14+0xffff]
+      // e:  48 8b 99 ff ff ff ff    mov    rbx,QWORD PTR [rcx-0x1]
+      // 15: 49 89 8e ff ff 00 00    mov    QWORD PTR [r14+0xffff],rcx
+      // 1c: 49 8b 8e ff ff 00 00    mov    rcx,QWORD PTR [r14+0xffff]
+      0x49, 0x89, 0x8e, -1, -1, 0x00, 0x00,
+      0x49, 0x8b, 0x8e, -1, -1, 0x00, 0x00,
+      0x48, 0x8b, 0x99, -1, -1, -1, -1,
+      0x49, 0x89, 0x8e, -1, -1, 0x00, 0x00,
+      0x49, 0x8b, 0x8e, -1, -1, 0x00, 0x00,
+  };
+}
+
 class UnoptimizedCall : public ValueObject {
  public:
   UnoptimizedCall(uword return_address, const Code& code)
@@ -25,9 +156,9 @@ class UnoptimizedCall : public ValueObject {
     uword pc = return_address;
 
     // callq [CODE_REG + entry_point_offset]
-    static int16_t call_pattern[] = {
-        0x41, 0xff, 0x54, 0x24, -1,
-    };
+    // static int16_t call_pattern[] = {
+    //     0x41, 0xff, 0x54, 0x24, -1,
+    // };
     if (MatchesPattern(pc, call_pattern, ARRAY_SIZE(call_pattern))) {
       pc -= ARRAY_SIZE(call_pattern);
     } else {
@@ -35,39 +166,41 @@ class UnoptimizedCall : public ValueObject {
     }
 
     // movq CODE_REG, [PP + offset]
-    static int16_t load_code_disp8[] = {
-        0x4d, 0x8b, 0x67, -1,  //
-    };
-    static int16_t load_code_disp32[] = {
-        0x4d, 0x8b, 0xa7, -1, -1, -1, -1,
-    };
+    // static int16_t load_code_disp8[] = {
+    //     0x4d, 0x8b, 0x67, -1,  //
+    // };
+    // static int16_t load_code_disp32[] = {
+    //     0x4d, 0x8b, 0xa7, -1, -1, -1, -1,
+    // };
+    pc -= before_code_pc_skip;
     if (MatchesPattern(pc, load_code_disp8, ARRAY_SIZE(load_code_disp8))) {
       pc -= ARRAY_SIZE(load_code_disp8);
-      code_index_ = IndexFromPPLoadDisp8(pc + 3);
+      code_index_ = IndexFromPPLoadDisp8(pc + code_pc_offset);
     } else if (MatchesPattern(pc, load_code_disp32,
                               ARRAY_SIZE(load_code_disp32))) {
       pc -= ARRAY_SIZE(load_code_disp32);
-      code_index_ = IndexFromPPLoadDisp32(pc + 3);
+      code_index_ = IndexFromPPLoadDisp32(pc + code_pc_offset);
     } else {
       FATAL("Failed to decode at %" Px, pc);
     }
+    pc -= after_code_pc_skip;
     ASSERT(Object::Handle(object_pool_.ObjectAt(code_index_)).IsCode());
 
     // movq RBX, [PP + offset]
-    static int16_t load_argument_disp8[] = {
-        0x49, 0x8b, 0x5f, -1,  //
-    };
-    static int16_t load_argument_disp32[] = {
-        0x49, 0x8b, 0x9f, -1, -1, -1, -1,
-    };
+    // static int16_t load_argument_disp8[] = {
+    //     0x49, 0x8b, 0x5f, -1,  //
+    // };
+    // static int16_t load_argument_disp32[] = {
+    //     0x49, 0x8b, 0x9f, -1, -1, -1, -1,
+    // };
     if (MatchesPattern(pc, load_argument_disp8,
                        ARRAY_SIZE(load_argument_disp8))) {
       pc -= ARRAY_SIZE(load_argument_disp8);
-      argument_index_ = IndexFromPPLoadDisp8(pc + 3);
+      argument_index_ = IndexFromPPLoadDisp8(pc + arg_pc_offset);
     } else if (MatchesPattern(pc, load_argument_disp32,
                               ARRAY_SIZE(load_argument_disp32))) {
       pc -= ARRAY_SIZE(load_argument_disp32);
-      argument_index_ = IndexFromPPLoadDisp32(pc + 3);
+      argument_index_ = IndexFromPPLoadDisp32(pc + arg_pc_offset);
     } else {
       FATAL("Failed to decode at %" Px, pc);
     }
@@ -165,9 +298,9 @@ class PoolPointerCall : public ValueObject {
     uword pc = return_address;
 
     // callq [CODE_REG + entry_point_offset]
-    static int16_t call_pattern[] = {
-        0x41, 0xff, 0x54, 0x24, -1,
-    };
+    // static int16_t call_pattern[] = {
+    //     0x41, 0xff, 0x54, 0x24, -1,
+    // };
     if (MatchesPattern(pc, call_pattern, ARRAY_SIZE(call_pattern))) {
       pc -= ARRAY_SIZE(call_pattern);
     } else {
@@ -175,22 +308,24 @@ class PoolPointerCall : public ValueObject {
     }
 
     // movq CODE_REG, [PP + offset]
-    static int16_t load_code_disp8[] = {
-        0x4d, 0x8b, 0x67, -1,  //
-    };
-    static int16_t load_code_disp32[] = {
-        0x4d, 0x8b, 0xa7, -1, -1, -1, -1,
-    };
+    // static int16_t load_code_disp8[] = {
+    //     0x4d, 0x8b, 0x67, -1,  //
+    // };
+    // static int16_t load_code_disp32[] = {
+    //     0x4d, 0x8b, 0xa7, -1, -1, -1, -1,
+    // };
+    pc -= before_code_pc_skip;
     if (MatchesPattern(pc, load_code_disp8, ARRAY_SIZE(load_code_disp8))) {
       pc -= ARRAY_SIZE(load_code_disp8);
-      code_index_ = IndexFromPPLoadDisp8(pc + 3);
+      code_index_ = IndexFromPPLoadDisp8(pc + code_pc_offset);
     } else if (MatchesPattern(pc, load_code_disp32,
                               ARRAY_SIZE(load_code_disp32))) {
       pc -= ARRAY_SIZE(load_code_disp32);
-      code_index_ = IndexFromPPLoadDisp32(pc + 3);
+      code_index_ = IndexFromPPLoadDisp32(pc + code_pc_offset);
     } else {
       FATAL("Failed to decode at %" Px, pc);
     }
+    pc -= after_code_pc_skip;
     ASSERT(Object::Handle(object_pool_.ObjectAt(code_index_)).IsCode());
   }
 
@@ -265,19 +400,19 @@ class SwitchableCall : public SwitchableCallBase {
     }
 
     // movq RBX, [PP + offset]
-    static int16_t load_data_disp8[] = {
-        0x49, 0x8b, 0x5f, -1,  //
-    };
-    static int16_t load_data_disp32[] = {
-        0x49, 0x8b, 0x9f, -1, -1, -1, -1,
-    };
+    // static int16_t load_data_disp8[] = {
+    //     0x49, 0x8b, 0x5f, -1,  //
+    // };
+    // static int16_t load_data_disp32[] = {
+    //     0x49, 0x8b, 0x9f, -1, -1, -1, -1,
+    // };
     if (MatchesPattern(pc, load_data_disp8, ARRAY_SIZE(load_data_disp8))) {
       pc -= ARRAY_SIZE(load_data_disp8);
-      data_index_ = IndexFromPPLoadDisp8(pc + 3);
+      data_index_ = IndexFromPPLoadDisp8(pc + code_data_offset);
     } else if (MatchesPattern(pc, load_data_disp32,
                               ARRAY_SIZE(load_data_disp32))) {
       pc -= ARRAY_SIZE(load_data_disp32);
-      data_index_ = IndexFromPPLoadDisp32(pc + 3);
+      data_index_ = IndexFromPPLoadDisp32(pc + code_data_offset);
     } else {
       FATAL("Failed to decode at %" Px, pc);
     }
@@ -295,19 +430,19 @@ class SwitchableCall : public SwitchableCallBase {
     }
 
     // movq CODE_REG, [PP + offset]
-    static int16_t load_code_disp8[] = {
-        0x4d, 0x8b, 0x67, -1,  //
-    };
-    static int16_t load_code_disp32[] = {
-        0x4d, 0x8b, 0xa7, -1, -1, -1, -1,
-    };
+    // static int16_t load_code_disp8[] = {
+    //     0x4d, 0x8b, 0x67, -1,  //
+    // };
+    // static int16_t load_code_disp32[] = {
+    //     0x4d, 0x8b, 0xa7, -1, -1, -1, -1,
+    // };
     if (MatchesPattern(pc, load_code_disp8, ARRAY_SIZE(load_code_disp8))) {
       pc -= ARRAY_SIZE(load_code_disp8);
-      target_index_ = IndexFromPPLoadDisp8(pc + 3);
+      target_index_ = IndexFromPPLoadDisp8(pc + code_pc_offset);
     } else if (MatchesPattern(pc, load_code_disp32,
                               ARRAY_SIZE(load_code_disp32))) {
       pc -= ARRAY_SIZE(load_code_disp32);
-      target_index_ = IndexFromPPLoadDisp32(pc + 3);
+      target_index_ = IndexFromPPLoadDisp32(pc + code_pc_offset);
     } else {
       FATAL("Failed to decode at %" Px, pc);
     }
@@ -348,38 +483,39 @@ class BareSwitchableCall : public SwitchableCallBase {
     }
 
     // movq RBX, [PP + offset]
-    static int16_t load_data_disp8[] = {
-        0x49, 0x8b, 0x5f, -1,  //
-    };
-    static int16_t load_data_disp32[] = {
-        0x49, 0x8b, 0x9f, -1, -1, -1, -1,
-    };
+    // static int16_t load_data_disp8[] = {
+    //     0x49, 0x8b, 0x5f, -1,  //
+    // };
+    // static int16_t load_data_disp32[] = {
+    //     0x49, 0x8b, 0x9f, -1, -1, -1, -1,
+    // };
     if (MatchesPattern(pc, load_data_disp8, ARRAY_SIZE(load_data_disp8))) {
       pc -= ARRAY_SIZE(load_data_disp8);
-      data_index_ = IndexFromPPLoadDisp8(pc + 3);
+      data_index_ = IndexFromPPLoadDisp8(pc + code_data_offset);
     } else if (MatchesPattern(pc, load_data_disp32,
                               ARRAY_SIZE(load_data_disp32))) {
       pc -= ARRAY_SIZE(load_data_disp32);
-      data_index_ = IndexFromPPLoadDisp32(pc + 3);
+      data_index_ = IndexFromPPLoadDisp32(pc + code_data_offset);
     } else {
       FATAL("Failed to decode at %" Px, pc);
     }
     ASSERT(!Object::Handle(object_pool_.ObjectAt(data_index_)).IsCode());
 
     // movq RCX, [PP + offset]
-    static int16_t load_code_disp8[] = {
-        0x49, 0x8b, 0x4f, -1,  //
-    };
-    static int16_t load_code_disp32[] = {
-        0x49, 0x8b, 0x8f, -1, -1, -1, -1,
-    };
-    if (MatchesPattern(pc, load_code_disp8, ARRAY_SIZE(load_code_disp8))) {
-      pc -= ARRAY_SIZE(load_code_disp8);
-      target_index_ = IndexFromPPLoadDisp8(pc + 3);
-    } else if (MatchesPattern(pc, load_code_disp32,
-                              ARRAY_SIZE(load_code_disp32))) {
-      pc -= ARRAY_SIZE(load_code_disp32);
-      target_index_ = IndexFromPPLoadDisp32(pc + 3);
+    // static int16_t load_code_disp8[] = {
+    //     0x49, 0x8b, 0x4f, -1,  //
+    // };
+    // static int16_t load_code_disp32[] = {
+    //     0x49, 0x8b, 0x8f, -1, -1, -1, -1,
+    // };
+    if (MatchesPattern(pc, load_code_disp8_rcx,
+                       ARRAY_SIZE(load_code_disp8_rcx))) {
+      pc -= ARRAY_SIZE(load_code_disp8_rcx);
+      target_index_ = IndexFromPPLoadDisp8(pc + code_rcx_pc_offset);
+    } else if (MatchesPattern(pc, load_code_disp32_rcx,
+                              ARRAY_SIZE(load_code_disp32_rcx))) {
+      pc -= ARRAY_SIZE(load_code_disp32_rcx);
+      target_index_ = IndexFromPPLoadDisp32(pc + code_rcx_pc_offset);
     } else {
       FATAL("Failed to decode at %" Px, pc);
     }

@@ -329,7 +329,7 @@ class VMTestSuite extends TestSuite {
     var filename = configuration.architecture == Architecture.x64 ||
             configuration.architecture == Architecture.x64c
         ? '$buildDir/gen/kernel-service.dart.snapshot'
-        : '$buildDir/gen/kernel_service.dill';
+        : '$buildDir/kernel-service.dart.snapshot';
     var dfePath = Path(filename).absolute.toNativePath();
     // Enable 'records' experiment as it is used by certain vm/cc unit tests.
     final experiments = [...configuration.experiments, 'records'];

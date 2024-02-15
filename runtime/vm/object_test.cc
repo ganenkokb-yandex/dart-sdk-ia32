@@ -8090,7 +8090,7 @@ static CodePtr CreateInvokeInstantiateTypeArgumentsStub(Thread* thread) {
   invoke_instantiate_tav.set_owner(function);
   invoke_instantiate_tav.set_exception_handlers(
       ExceptionHandlers::Handle(zone, ExceptionHandlers::New(0)));
-#if defined(TARGET_ARCH_IA32)
+#if defined(TARGET_ARCH_IA32_UNDEFINED)
   EXPECT_EQ(0, pool.Length());
 #else
   EXPECT_EQ(1, pool.Length());  // The InstantiateTypeArguments stub.
